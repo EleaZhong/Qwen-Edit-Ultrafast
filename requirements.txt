@@ -11,3 +11,6 @@ kernels
 torchvision
 peft
 torchao==0.11.0
+pydantic
+pandas
+modal

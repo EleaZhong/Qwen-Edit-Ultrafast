@@ -1,9 +1,11 @@
+import copy
 import math
 import random
 import os
 import tempfile
 
 import numpy as np
+from spaces.zero.torch.aoti import ZeroGPUCompiledModel, ZeroGPUWeights
 import torch
 from PIL import Image
 import gradio as gr
@@ -12,13 +14,15 @@ import spaces
 from diffusers import FlowMatchEulerDiscreteScheduler
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
+from torchao.quantization import quantize_
+from torchao.quantization import Int8WeightOnlyConfig
 
 from qwenimage.debug import ftimed
 from qwenimage.optimization import optimize_pipeline_
-from qwenimage.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
-from qwenimage.transformer_qwenimage import QwenImageTransformer2DModel
-from qwenimage.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 from qwenimage.prompt import build_camera_prompt
+from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
+from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
+from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 
 # --- Model Loading ---
 dtype = torch.bfloat16
@@ -48,7 +52,25 @@ pipe.unload_lora_weights()
 pipe.transformer.__class__ = QwenImageTransformer2DModel
 pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
 
-optimize_pipeline_(pipe, image=[Image.new("RGB", (1024, 1024)), Image.new("RGB", (1024, 1024))], prompt="prompt")
+# transformer_clone = copy.deepcopy(pipe.transformer)
+
+# quantize_(pipe.transformer, Int8WeightOnlyConfig())
+# torch.save(pipe.transformer.state_dict(), "transformer_int8.pt")
+# assert False
+
+# from torchao.quantization import Int8DynamicActivationInt4WeightConfig
+# quantize_(pipe.transformer, Int8DynamicActivationInt4WeightConfig())
+
+optimize_pipeline_(pipe, image=[Image.new("RGB", (1024, 1024))], prompt="prompt", height=1024, width=1024, num_inference_steps=4)
+
+# state_dict = torch.load("transformer_int8.pt")
+# print(state_dict.keys())
+# # state_dict = pipe.transformer.state_dict()
+# print(pipe.transformer.state_dict().keys())
+# zerogpu_weights = ZeroGPUWeights({name: weight for name, weight in state_dict.items()})
+# compiled_transformer = ZeroGPUCompiledModel("transformer.pt2", zerogpu_weights)
+
+# spaces.aoti_apply(compiled_transformer, pipe.transformer)
 
 
 MAX_SEED = np.iinfo(np.int32).max
@@ -90,6 +112,8 @@ def infer_camera_edit(
 
     if len(pil_images) == 0:
         raise gr.Error("Please upload an image first.")
+    
+    print(f"{len(pil_images)=}")
 
     if prompt == "no camera movement":
         return image, seed, prompt

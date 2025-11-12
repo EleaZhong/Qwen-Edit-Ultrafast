@@ -414,6 +414,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         return latents
 
     # Copied from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit.QwenImageEditPipeline._encode_vae_image
+    @ftimed
     def _encode_vae_image(self, image: torch.Tensor, generator: torch.Generator):
         if isinstance(generator, list):
             image_latents = [
@@ -891,7 +892,8 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                     latents.device, latents.dtype
                 )
                 latents = latents / latents_std + latents_mean
-                image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
+                with ctimed("vae.decode"):
+                    image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
                 image = self.image_processor.postprocess(image, output_type=output_type)
 
             # Offload all models

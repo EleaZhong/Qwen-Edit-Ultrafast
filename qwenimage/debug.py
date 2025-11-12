@@ -1,3 +1,4 @@
+from collections import defaultdict
 import os
 from pathlib import Path
 import time
@@ -5,6 +6,9 @@ import uuid
 import warnings
 from functools import wraps
 from typing import Callable, Literal
+import statistics
+
+import gc
 
 import numpy as np
 from PIL import Image
@@ -12,6 +16,51 @@ import torch
 from torchvision.utils import save_image
 
 DEBUG = True
+
+class ProfileReport:
+    def __init__(self):
+        self.recorded_times = defaultdict(list)
+    
+    def record(self,name,time):
+        self.recorded_times[name].append(time)
+    
+    def __getitem__(self, name):
+        return self.recorded_times[name]
+    
+    def summary(self):
+        return {
+            name: statistics.mean(times)
+            for name, times in self.recorded_times.items()
+        }
+    
+    def __str__(self):
+        return "ProfileReport: "+str(self.summary())
+    
+    def clear(self):
+        self.recorded_times = defaultdict(list)
+
+profile_report = ProfileReport()
+
+class ProfileSession:
+    # def __init__(self):
+    #     pass
+
+    def __enter__(self):
+        return self.start()
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        return self.stop()
+    
+    def start(self):
+        global profile_report
+        profile_report.clear()
+        return profile_report
+        
+    def stop(self):
+        global profile_report
+        print(profile_report)
+        profile_report.clear()
+
 
 def ftimed(func=None):
 
@@ -25,6 +74,7 @@ def ftimed(func=None):
                 result = func(*args, **kwargs)
                 end_time = time.perf_counter()
                 print(f"Time taken by {func.__qualname__}: {end_time - start_time} seconds")
+                profile_report.record(func.__qualname__, end_time - start_time)
                 return result
         return wrapper
 
@@ -44,7 +94,7 @@ class ctimed:
     ```
     """
     def __init__(self, name=None):
-        self.name = name
+        self.name = name if name is not None else "unnamed"
         self.start_time = None
 
     def __enter__(self):
@@ -55,10 +105,8 @@ class ctimed:
     def __exit__(self, exc_type, exc_value, traceback):
         if DEBUG:
             end_time = time.perf_counter()
-            if self.name:
-                print(f"Time taken by {self.name}: {end_time - self.start_time} seconds")
-            else:
-                print(f"Time taken: {end_time - self.start_time} seconds")
+            print(f"Time taken by {self.name}: {end_time - self.start_time} seconds")
+            profile_report.record(self.name, end_time - self.start_time)
 
 
 def print_gpu_memory(clear_mem: Literal["pre", "post", None] = "pre"):
@@ -66,7 +114,7 @@ def print_gpu_memory(clear_mem: Literal["pre", "post", None] = "pre"):
         warnings.warn("Warning: CUDA device not available. Running on CPU.")
         return
     if clear_mem == "pre":
-        torch.cuda.empty_cache()
+        clear_cuda_memory()
     allocated = torch.cuda.memory_allocated()
     reserved = torch.cuda.memory_reserved()
     total = torch.cuda.get_device_properties(0).total_memory
@@ -74,7 +122,16 @@ def print_gpu_memory(clear_mem: Literal["pre", "post", None] = "pre"):
     print(f"Memory reserved: {reserved / (1024**2):.2f} MB")
     print(f"Total memory: {total / (1024**2):.2f} MB")
     if clear_mem == "post":
-        torch.cuda.empty_cache()
+        clear_cuda_memory()
+
+
+def clear_cuda_memory():
+    if not torch.cuda.is_available():
+        return
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
 
 def cuda_empty_cache(func):
     def wrapper(*args, **kwargs):
@@ -86,6 +143,9 @@ def cuda_empty_cache(func):
 
 def print_first_param(module):
     print(list(module.parameters())[0])
+
+def first_param(module):
+    return list(module.parameters())[0]
 
 def fdebug(func=None, *, exclude=None):
     if exclude is None:

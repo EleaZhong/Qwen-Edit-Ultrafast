@@ -17,3 +17,5 @@ weights/*
 latentmask/latentanalysis/*
 cache/*
 docs/automated-documentation/*
+checkpoints/*
+reports/*

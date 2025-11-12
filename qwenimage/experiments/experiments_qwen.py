@@ -1,0 +1,241 @@
+import itertools
+import json
+import os
+from pathlib import Path
+import random
+import statistics
+import torch
+from PIL import Image
+import pandas as pd
+
+from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
+from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
+from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
+from qwenimage.experiment import AbstractExperiment, ExperimentConfig
+from qwenimage.debug import ProfileSession, ftimed
+from qwenimage.optimization import optimize_pipeline_
+from qwenimage.prompt import build_camera_prompt
+
+
+class ExperimentRegistry:
+    registry = {}
+    
+    @classmethod
+    def register(cls, name: str):
+        def decorator(experiment_class):
+            if name in cls.registry:
+                raise ValueError(f"Experiment '{name}' is already registered")
+            cls.registry[name] = experiment_class
+            experiment_class.registry_name = name
+            return experiment_class
+        return decorator
+    
+    @classmethod
+    def get(cls, name: str):
+        if name not in cls.registry:
+            raise KeyError(f"{name} not in {list(cls.registry.keys())}")
+        return cls.registry[name]
+    
+    @classmethod
+    def keys(cls):
+        return list(cls.registry.keys())
+    
+    @classmethod
+    def dict(cls):
+        return dict(cls.registry)
+
+
+class PipeInputs:
+    images = Path("scripts/assets/").iterdir()
+
+    camera_params = {
+        "rotate_deg": [-90,-45,0,45,90],
+        "move_forward": [0,5,10],
+        "vertical_tilt": [-1,0,1],
+        "wideangle": [True, False]
+    }
+    
+    def __init__(self, seed=42):
+        param_keys = list(self.camera_params.keys())
+        param_values = list(self.camera_params.values())
+        param_keys.append("image")
+        param_values.append(self.images)
+        self.total_inputs = []
+        for comb in itertools.product(*param_values):
+            inp = {key:val for key,val in zip(param_keys, comb)}
+            self.total_inputs.append(inp)
+        print(f"{len(self.total_inputs)} input combinations")
+        random.seed(seed)
+        random.shuffle(self.total_inputs)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.generator = torch.Generator(device=device).manual_seed(seed)
+
+    def __len__(self):
+        return len(self.total_inputs)
+
+    def __getitem__(self, ind):
+        inputs = self.total_inputs[ind]
+        cam_prompt_params = {k:v for k,v in inputs.items() if k in self.camera_params}
+        prompt = build_camera_prompt(**cam_prompt_params)
+        image = [Image.open(inputs["image"]).convert("RGB")]
+        return {
+            "image": image,
+            "prompt": prompt,
+            "generator": self.generator,
+            "num_inference_steps": 4,
+            "true_cfg_scale": 1.0,
+            "num_images_per_prompt": 1,
+        }
+
+
+
+@ExperimentRegistry.register(name="qwen_base")
+class QwenBaseExperiment(AbstractExperiment):
+    def __init__(self, config: ExperimentConfig | None = None, pipe_inputs: PipeInputs | None = None):
+        self.config = config if config is not None else ExperimentConfig()
+        self.config.report_dir.mkdir(parents=True, exist_ok=True)
+        self.profile_report = ProfileSession().start()
+        self.pipe_inputs = pipe_inputs if pipe_inputs is not None else PipeInputs()
+    
+    @ftimed
+    def load(self):
+        dtype = torch.bfloat16
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        pipe = QwenImageEditPlusPipeline.from_pretrained(
+            "Qwen/Qwen-Image-Edit-2509", 
+            transformer=QwenImageTransformer2DModel.from_pretrained(
+                "linoyts/Qwen-Image-Edit-Rapid-AIO", 
+                subfolder='transformer',
+                torch_dtype=dtype,
+                device_map='cuda'),
+            torch_dtype=dtype,
+        ).to(device)
+
+        pipe.load_lora_weights(
+            "dx8152/Qwen-Edit-2509-Multiple-angles", 
+            weight_name="镜头转换.safetensors", adapter_name="angles"
+        )
+
+        pipe.set_adapters(["angles"], adapter_weights=[1.])
+        pipe.fuse_lora(adapter_names=["angles"], lora_scale=1.25)
+        pipe.unload_lora_weights()
+        self.pipe = pipe
+
+    @ftimed
+    def optimize(self):
+        # pipe.transformer.__class__ = QwenImageTransformer2DModel
+        # pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        # optimize_pipeline_(pipe, image=[Image.new("RGB", (1024, 1024))], prompt="prompt", height=1024, width=1024, num_inference_steps=4)
+        pass
+    
+    @ftimed
+    def run_once(self, *args, **kwargs):
+        return self.pipe(*args, **kwargs).images[0]
+
+    def run(self):
+        output_save_dir = self.config.report_dir / f"{self.config.name}_outputs"
+        output_save_dir.mkdir(parents=True, exist_ok=True)
+
+        for i in range(self.config.iterations):
+            inputs = self.pipe_inputs[i]
+            output = self.run_once(**inputs)
+            output.save(output_save_dir / f"{i:03d}.jpg")
+
+    def report(self):
+        print(self.profile_report)
+        
+        raw_data = dict(self.profile_report.recorded_times)
+        with open(self.config.report_dir/  f"{self.config.name}_raw.json", "w") as f:
+            json.dump(raw_data, f, indent=2)
+        
+        data = []
+        for name, times in self.profile_report.recorded_times.items():
+            mean = statistics.mean(times)
+            std = statistics.stdev(times) if len(times) > 1 else 0
+            size = len(times)
+            data.append({
+                'name': name,
+                'mean': mean,
+                'std': std,
+                'len': size
+            })
+        
+        df = pd.DataFrame(data)
+        df.to_csv(self.config.report_dir/f"{self.config.name}.csv")
+        return df, raw_data
+    
+    def cleanup(self):
+        del self.pipe.transformer
+        del self.pipe
+
+
+@ExperimentRegistry.register(name="qwen_fa3")
+class Qwen_FA3(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+
+@ExperimentRegistry.register(name="qwen_aot")
+class Qwen_AoT(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.compiled_transformer = optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=False,
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+    
+    def cleanup(self):
+        super().cleanup()
+        del self.compiled_transformer
+
+@ExperimentRegistry.register(name="qwen_fa3_aot")
+class Qwen_FA3_AoT(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        self.compiled_transformer = optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=False,
+            suffix="_fa3",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+
+    def cleanup(self):
+        super().cleanup()
+        del self.compiled_transformer
+
+@ExperimentRegistry.register(name="qwen_fa3_aot_int8")
+class Qwen_FA3_AoT_int8(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        self.compiled_transformer = optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=True,
+            suffix="_fa3",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+
+    def cleanup(self):
+        super().cleanup()
+        del self.compiled_transformer
