@@ -40,7 +40,7 @@ MAX_SEED = np.iinfo(np.int32).max
 
 
 @spaces.GPU
-@ftimed
+# @ftimed
 def infer_camera_edit(
     image,
     rotate_deg,
