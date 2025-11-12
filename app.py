@@ -1,26 +1,23 @@
-import gradio as gr
-import numpy as np
+import math
 import random
-import torch
-import spaces
+import os
+import tempfile
 
+import numpy as np
+import torch
 from PIL import Image
+import gradio as gr
+from gradio_client import Client, handle_file
+import spaces
 from diffusers import FlowMatchEulerDiscreteScheduler
+from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file
+
 from optimization import optimize_pipeline_
 from qwenimage.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
 from qwenimage.transformer_qwenimage import QwenImageTransformer2DModel
 from qwenimage.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
-
-import math
-from huggingface_hub import hf_hub_download
-from safetensors.torch import load_file
-
-from PIL import Image
-import os
-import gradio as gr
-from gradio_client import Client, handle_file
-import tempfile
-
+from prompt import build_camera_prompt
 
 # --- Model Loading ---
 dtype = torch.bfloat16
@@ -47,7 +44,6 @@ pipe.fuse_lora(adapter_names=["angles"], lora_scale=1.25)
 pipe.unload_lora_weights()
 
 
-
 pipe.transformer.__class__ = QwenImageTransformer2DModel
 pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
 
@@ -55,48 +51,6 @@ optimize_pipeline_(pipe, image=[Image.new("RGB", (1024, 1024)), Image.new("RGB",
 
 
 MAX_SEED = np.iinfo(np.int32).max
-
-def _generate_video_segment(input_image_path: str, output_image_path: str, prompt: str, request: gr.Request) -> str:
-    """Generates a single video segment using the external service."""
-    x_ip_token = request.headers['x-ip-token']
-    video_client = Client("multimodalart/wan-2-2-first-last-frame", headers={"x-ip-token": x_ip_token})
-    result = video_client.predict(
-        start_image_pil=handle_file(input_image_path),
-        end_image_pil=handle_file(output_image_path),
-        prompt=prompt, api_name="/generate_video",
-    )
-    return result[0]["video"]
-
-def build_camera_prompt(rotate_deg, move_forward, vertical_tilt, wideangle):
-    prompt_parts = []
-
-    # Rotation
-    if rotate_deg != 0:
-        direction = "left" if rotate_deg > 0 else "right"
-        if direction == "left":
-            prompt_parts.append(f"将镜头向左旋转{abs(rotate_deg)}度 Rotate the camera {abs(rotate_deg)} degrees to the left.")
-        else:
-            prompt_parts.append(f"将镜头向右旋转{abs(rotate_deg)}度 Rotate the camera {abs(rotate_deg)} degrees to the right.")
-
-
-    # Move forward / close-up
-    if move_forward > 5:
-        prompt_parts.append("将镜头转为特写镜头 Turn the camera to a close-up.")
-    elif move_forward >= 1:
-        prompt_parts.append("将镜头向前移动 Move the camera forward.")
-
-    # Vertical tilt
-    if vertical_tilt <= -1:
-        prompt_parts.append("将相机转向鸟瞰视角 Turn the camera to a bird's-eye view.")
-    elif vertical_tilt >= 1:
-        prompt_parts.append("将相机切换到仰视视角 Turn the camera to a worm's-eye view.")
-
-    # Lens option
-    if wideangle:
-        prompt_parts.append(" 将镜头转为广角镜头 Turn the camera to a wide-angle lens.")
-
-    final_prompt = " ".join(prompt_parts).strip()
-    return final_prompt if final_prompt else "no camera movement"
 
 
 @spaces.GPU
@@ -149,32 +103,6 @@ def infer_camera_edit(
     ).images[0]
 
     return result, seed, prompt
-
-def create_video_between_images(input_image, output_image, prompt: str, request: gr.Request) -> str:
-    """Create a video between the input and output images."""
-    if input_image is None or output_image is None:
-        raise gr.Error("Both input and output images are required to create a video.")
-    
-    try:
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-            input_image.save(tmp.name)
-            input_image_path = tmp.name
-        
-        output_pil = Image.fromarray(output_image.astype('uint8'))
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-            output_pil.save(tmp.name)
-            output_image_path = tmp.name
-            
-        video_path = _generate_video_segment(
-            input_image_path, 
-            output_image_path, 
-            prompt if prompt else "Camera movement transformation",
-            request
-        )
-        return video_path
-    except Exception as e:
-        raise gr.Error(f"Video generation failed: {e}")
 
 
 # --- UI ---
@@ -245,9 +173,6 @@ with gr.Blocks(theme=gr.themes.Citrus(), css=css) as demo:
             with gr.Column():
                 result = gr.Image(label="Output Image", interactive=False)
                 prompt_preview = gr.Textbox(label="Processed Prompt", interactive=False)
-                create_video_button = gr.Button("🎥 Create Video Between Images", variant="secondary", visible=False)
-                with gr.Group(visible=False) as video_group:
-                    video_output = gr.Video(label="Generated Video", show_download_button=True, autoplay=True)
                     
     inputs = [
         image,rotate_deg, move_forward,
@@ -263,48 +188,11 @@ with gr.Blocks(theme=gr.themes.Citrus(), css=css) as demo:
         outputs=[rotate_deg, move_forward, vertical_tilt, wideangle, is_reset],
         queue=False
     ).then(fn=end_reset, inputs=None, outputs=[is_reset], queue=False)
-
-    # Manual generation with video button visibility control
-    def infer_and_show_video_button(*args):
-        result_img, result_seed, result_prompt = infer_camera_edit(*args)
-        # Show video button if we have both input and output images
-        show_button = args[0] is not None and result_img is not None
-        return result_img, result_seed, result_prompt, gr.update(visible=show_button)
     
     run_event = run_btn.click(
-        fn=infer_and_show_video_button, 
+        fn=infer_camera_edit, 
         inputs=inputs, 
-        outputs=outputs + [create_video_button]
-    )
-
-    # Video creation
-    create_video_button.click(
-        fn=lambda: gr.update(visible=True), 
-        outputs=[video_group],
-        api_name=False
-    ).then(
-        fn=create_video_between_images,
-        inputs=[image, result, prompt_preview],
-        outputs=[video_output],
-        api_name=False
-    )
-
-    # Examples
-    gr.Examples(
-        examples=[
-            ["tool_of_the_sea.png", 90, 0, 0, False, 0, True, 1.0, 4, 568, 1024],
-            ["monkey.jpg", -90, 0, 0, False, 0, True, 1.0, 4, 704, 1024],
-            ["metropolis.jpg", 0, 0, -1, False, 0, True, 1.0, 4, 816, 1024],
-            ["disaster_girl.jpg", -45, 0, 1, False, 0, True, 1.0, 4, 768, 1024],
-            ["grumpy.png", 90, 0, 1, False, 0, True, 1.0, 4, 576, 1024]
-        ],
-        inputs=[image,rotate_deg, move_forward,
-        vertical_tilt, wideangle,
-        seed, randomize_seed, true_guidance_scale, num_inference_steps, height, width],
-        outputs=outputs,
-        fn=infer_camera_edit,
-        cache_examples="lazy",
-        elem_id="examples"
+        outputs=outputs
     )
     
     # Image upload triggers dimension update and control reset
@@ -330,10 +218,7 @@ with gr.Blocks(theme=gr.themes.Citrus(), css=css) as demo:
         if is_reset:
             return gr.update(), gr.update(), gr.update(), gr.update()
         else:
-            result_img, result_seed, result_prompt = infer_camera_edit(*args)
-            # Show video button if we have both input and output
-            show_button = args[0] is not None and result_img is not None
-            return result_img, result_seed, result_prompt, gr.update(visible=show_button)
+            return infer_camera_edit(*args)
 
     control_inputs = [
         image, rotate_deg, move_forward,
@@ -343,9 +228,9 @@ with gr.Blocks(theme=gr.themes.Citrus(), css=css) as demo:
     control_inputs_with_flag = [is_reset] + control_inputs
 
     for control in [rotate_deg, move_forward, vertical_tilt]:
-        control.release(fn=maybe_infer, inputs=control_inputs_with_flag, outputs=outputs + [create_video_button])
+        control.release(fn=maybe_infer, inputs=control_inputs_with_flag, outputs=outputs)
     
-    wideangle.input(fn=maybe_infer, inputs=control_inputs_with_flag, outputs=outputs + [create_video_button])
+    wideangle.input(fn=maybe_infer, inputs=control_inputs_with_flag, outputs=outputs)
     
     run_event.then(lambda img, *_: img, inputs=[result], outputs=[prev_output])
 
