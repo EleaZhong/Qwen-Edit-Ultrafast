@@ -18,7 +18,7 @@ from torchao.quantization import quantize_
 from torchao.quantization import Int8WeightOnlyConfig
 
 from qwenimage.debug import ftimed
-from qwenimage.experiments.experiments_qwen import Qwen_FA3_AoT_int8, Qwen_int4
+from qwenimage.experiments.experiments_qwen import Qwen_FA3_AoT_int8
 from qwenimage.optimization import optimize_pipeline_
 from qwenimage.prompt import build_camera_prompt
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
