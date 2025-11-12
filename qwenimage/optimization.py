@@ -68,7 +68,6 @@ def drain_module_parameters(module: torch.nn.Module):
 
 
 @ftimed
-@spaces.GPU(duration=1500)
 def optimize_pipeline_(
         pipeline: Callable[P, Any],
         cache_compiled=True,
@@ -97,20 +96,23 @@ def optimize_pipeline_(
         zerogpu_weights = torch.load(transformer_weights_cache_path, weights_only=False)
         compiled_transformer = ZeroGPUCompiledModel(transformer_pt2_cache_path, zerogpu_weights)
     else:
-        with spaces.aoti_capture(pipeline.transformer) as call:
-            pipeline(**pipe_kwargs)
+        @spaces.GPU(duration=1500)
+        def compile_transformer():
+            with spaces.aoti_capture(pipeline.transformer) as call:
+                pipeline(**pipe_kwargs)
 
-        dynamic_shapes = tree_map(lambda t: None, call.kwargs)
-        dynamic_shapes |= TRANSFORMER_DYNAMIC_SHAPES
-        
-        exported = torch.export.export(
-            mod=pipeline.transformer,
-            args=call.args,
-            kwargs=call.kwargs,
-            dynamic_shapes=dynamic_shapes,
-        )
+            dynamic_shapes = tree_map(lambda t: None, call.kwargs)
+            dynamic_shapes |= TRANSFORMER_DYNAMIC_SHAPES
+            
+            exported = torch.export.export(
+                mod=pipeline.transformer,
+                args=call.args,
+                kwargs=call.kwargs,
+                dynamic_shapes=dynamic_shapes,
+            )
 
-        compiled_transformer = spaces.aoti_compile(exported, inductor_config)
+            return spaces.aoti_compile(exported, inductor_config)
+        compiled_transformer = compile_transformer()
         with open(transformer_pt2_cache_path, "wb") as f:
             f.write(compiled_transformer.archive_file.getvalue())
         torch.save(compiled_transformer.weights, transformer_weights_cache_path)
