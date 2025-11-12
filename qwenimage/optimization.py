@@ -67,7 +67,7 @@ def drain_module_parameters(module: torch.nn.Module):
         param.data = torch.Tensor([]).to(**meta)
 
 
-@ftimed
+# @ftimed
 @spaces.GPU(duration=1500)
 def optimize_pipeline_(
         pipeline: Callable[P, Any],
