@@ -17,8 +17,8 @@ from safetensors.torch import load_file
 from torchao.quantization import quantize_
 from torchao.quantization import Int8WeightOnlyConfig
 
-from qwenimage.debug import ftimed
-from qwenimage.experiments.experiments_qwen import Qwen_FA3_AoT_int8
+from qwenimage.debug import ctimed, ftimed
+from qwenimage.experiments.experiments_qwen import Qwen_FA3_AoT_fp8, Qwen_FA3_AoT_int8, QwenBaseExperiment
 from qwenimage.optimization import optimize_pipeline_
 from qwenimage.prompt import build_camera_prompt
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
@@ -30,6 +30,7 @@ dtype = torch.bfloat16
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 exp = Qwen_FA3_AoT_int8()
+# exp = Qwen_FA3_AoT_fp8()
 exp.load()
 exp.optimize()
 pipe = exp.pipe
@@ -55,30 +56,31 @@ def infer_camera_edit(
     prev_output = None,
     progress=gr.Progress(track_tqdm=True)
 ):
-    prompt = build_camera_prompt(rotate_deg, move_forward, vertical_tilt, wideangle)
-    print(f"Generated Prompt: {prompt}")
+    with ctimed("pre pipe"):
+        prompt = build_camera_prompt(rotate_deg, move_forward, vertical_tilt, wideangle)
+        print(f"Generated Prompt: {prompt}")
 
-    if randomize_seed:
-        seed = random.randint(0, MAX_SEED)
-    generator = torch.Generator(device=device).manual_seed(seed)
+        if randomize_seed:
+            seed = random.randint(0, MAX_SEED)
+        generator = torch.Generator(device=device).manual_seed(seed)
 
-    # Choose input image (prefer uploaded, else last output)
-    pil_images = []
-    if image is not None:
-        if isinstance(image, Image.Image):
-            pil_images.append(image.convert("RGB"))
-        elif hasattr(image, "name"):
-            pil_images.append(Image.open(image.name).convert("RGB"))
-    elif prev_output:
-        pil_images.append(prev_output.convert("RGB"))
+        # Choose input image (prefer uploaded, else last output)
+        pil_images = []
+        if image is not None:
+            if isinstance(image, Image.Image):
+                pil_images.append(image.convert("RGB"))
+            elif hasattr(image, "name"):
+                pil_images.append(Image.open(image.name).convert("RGB"))
+        elif prev_output:
+            pil_images.append(prev_output.convert("RGB"))
 
-    if len(pil_images) == 0:
-        raise gr.Error("Please upload an image first.")
-    
-    print(f"{len(pil_images)=}")
+        if len(pil_images) == 0:
+            raise gr.Error("Please upload an image first.")
+        
+        print(f"{len(pil_images)=}")
 
-    if prompt == "no camera movement":
-        return image, seed, prompt
+        if prompt == "no camera movement":
+            return image, seed, prompt
     result = pipe(
         image=pil_images,
         prompt=prompt,
@@ -154,7 +156,7 @@ with gr.Blocks(theme=gr.themes.Citrus(), css=css) as demo:
                     seed = gr.Slider(label="Seed", minimum=0, maximum=MAX_SEED, step=1, value=0)
                     randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
                     true_guidance_scale = gr.Slider(label="True Guidance Scale", minimum=1.0, maximum=10.0, step=0.1, value=1.0)
-                    num_inference_steps = gr.Slider(label="Inference Steps", minimum=1, maximum=40, step=1, value=4)
+                    num_inference_steps = gr.Slider(label="Inference Steps", minimum=1, maximum=40, step=1, value=3)
                     height = gr.Slider(label="Height", minimum=256, maximum=2048, step=8, value=1024)
                     width = gr.Slider(label="Width", minimum=256, maximum=2048, step=8, value=1024)
 
@@ -202,6 +204,7 @@ with gr.Blocks(theme=gr.themes.Citrus(), css=css) as demo:
 
 
     # Live updates
+    @ftimed
     def maybe_infer(is_reset, progress=gr.Progress(track_tqdm=True), *args):
         if is_reset:
             return gr.update(), gr.update(), gr.update(), gr.update()

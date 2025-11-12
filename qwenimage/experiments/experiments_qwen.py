@@ -10,7 +10,7 @@ import torch
 from PIL import Image
 import pandas as pd
 from spaces.zero.torch.aoti import ZeroGPUCompiledModel, ZeroGPUWeights
-from torchao.quantization import Float8WeightOnlyConfig, Int4WeightOnlyConfig, Int8DynamicActivationInt4WeightConfig, Int8DynamicActivationInt8WeightConfig, quantize_
+from torchao.quantization import Float8DynamicActivationFloat8WeightConfig, Float8WeightOnlyConfig, Int4WeightOnlyConfig, Int8DynamicActivationInt4WeightConfig, Int8DynamicActivationInt8WeightConfig, quantize_
 from torchao.quantization import Int8WeightOnlyConfig
 import spaces
 import torch
@@ -238,7 +238,7 @@ class Qwen_FA3_AoT_int8(QwenBaseExperiment):
         )
 
 
-@ExperimentRegistry.register(name="qwen_fp8")
+# @ExperimentRegistry.register(name="qwen_fp8")
 class Qwen_fp8(QwenBaseExperiment):
     @ftimed
     def optimize(self):
@@ -247,11 +247,66 @@ class Qwen_fp8(QwenBaseExperiment):
         quantize_(self.pipe.transformer, Float8WeightOnlyConfig())
 
 
-@ExperimentRegistry.register(name="qwen_int8")
+# @ExperimentRegistry.register(name="qwen_int8")
 class Qwen_int8(QwenBaseExperiment):
     @ftimed
     def optimize(self):
         self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         quantize_(self.pipe.transformer, Int8WeightOnlyConfig())
+
+
+
+
+@ExperimentRegistry.register(name="qwen_fa3_aot_fp8")
+class Qwen_FA3_AoT_fp8(QwenBaseExperiment):
+    @ftimed
+    @spaces.GPU()
+    def optimize(self):
+        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        pipe_kwargs={
+            "image": [Image.new("RGB", (1024, 1024))],
+            "prompt":"prompt",
+            "num_inference_steps":4
+        }
+        suffix="_fa3"
+
+        cache_compiled=self.config.cache_compiled
+        
+        transformer_pt2_cache_path = f"checkpoints/transformer_fp8{suffix}_archive.pt2"
+        transformer_weights_cache_path = f"checkpoints/transformer_fp8{suffix}_weights.pt"
+
+        print(f"original model size: {get_model_size_in_bytes(self.pipe.transformer) / 1024 / 1024} MB")
+        quantize_(self.pipe.transformer, Float8DynamicActivationFloat8WeightConfig())
+        print_first_param(self.pipe.transformer)
+        print(f"quantized model size: {get_model_size_in_bytes(self.pipe.transformer) / 1024 / 1024} MB")
+
+        inductor_config = INDUCTOR_CONFIGS
+
+        if os.path.isfile(transformer_pt2_cache_path) and cache_compiled:
+            drain_module_parameters(self.pipe.transformer)
+            zerogpu_weights = torch.load(transformer_weights_cache_path, weights_only=False)
+            compiled_transformer = ZeroGPUCompiledModel(transformer_pt2_cache_path, zerogpu_weights)
+        else:
+            with spaces.aoti_capture(self.pipe.transformer) as call:
+                self.pipe(**pipe_kwargs)
+
+            dynamic_shapes = tree_map(lambda t: None, call.kwargs)
+            dynamic_shapes |= TRANSFORMER_DYNAMIC_SHAPES
+            
+            exported = torch.export.export(
+                mod=self.pipe.transformer,
+                args=call.args,
+                kwargs=call.kwargs,
+                dynamic_shapes=dynamic_shapes,
+            )
+
+            compiled_transformer = spaces.aoti_compile(exported, inductor_config)
+            with open(transformer_pt2_cache_path, "wb") as f:
+                f.write(compiled_transformer.archive_file.getvalue())
+            torch.save(compiled_transformer.weights, transformer_weights_cache_path)
+
+
+        aoti_apply(compiled_transformer, self.pipe.transformer)
 

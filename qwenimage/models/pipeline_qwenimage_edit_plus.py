@@ -521,6 +521,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
 
     @torch.no_grad()
     @replace_example_docstring(EXAMPLE_DOC_STRING)
+    @ftimed
     def __call__(
         self,
         image: Optional[PipelineImageInput] = None,
