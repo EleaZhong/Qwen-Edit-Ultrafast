@@ -13,11 +13,12 @@ from diffusers import FlowMatchEulerDiscreteScheduler
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
-from optimization import optimize_pipeline_
+from qwenimage.debug import ftimed
+from qwenimage.optimization import optimize_pipeline_
 from qwenimage.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
 from qwenimage.transformer_qwenimage import QwenImageTransformer2DModel
 from qwenimage.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
-from prompt import build_camera_prompt
+from qwenimage.prompt import build_camera_prompt
 
 # --- Model Loading ---
 dtype = torch.bfloat16
@@ -53,7 +54,8 @@ optimize_pipeline_(pipe, image=[Image.new("RGB", (1024, 1024)), Image.new("RGB",
 MAX_SEED = np.iinfo(np.int32).max
 
 
-@spaces.GPU
+# @spaces.GPU
+@ftimed
 def infer_camera_edit(
     image,
     rotate_deg,
@@ -111,7 +113,7 @@ css = '''#col-container { max-width: 800px; margin: 0 auto; }
 #examples{max-width: 800px; margin: 0 auto; }'''
 
 def reset_all():
-    return [0, 0, 0, 0, False, True]
+    return [0, 0, 0, 0, False]
 
 def end_reset():
     return False
