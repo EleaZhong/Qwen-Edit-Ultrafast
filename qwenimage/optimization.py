@@ -68,6 +68,7 @@ def drain_module_parameters(module: torch.nn.Module):
 
 
 @ftimed
+@spaces.GPU(duration=1500)
 def optimize_pipeline_(
         pipeline: Callable[P, Any],
         cache_compiled=True,
@@ -116,4 +117,3 @@ def optimize_pipeline_(
 
 
     aoti_apply(compiled_transformer, pipeline.transformer)
-    return compiled_transformer

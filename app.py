@@ -18,6 +18,7 @@ from torchao.quantization import quantize_
 from torchao.quantization import Int8WeightOnlyConfig
 
 from qwenimage.debug import ftimed
+from qwenimage.experiments.experiments_qwen import Qwen_FA3_AoT_int8, Qwen_int4
 from qwenimage.optimization import optimize_pipeline_
 from qwenimage.prompt import build_camera_prompt
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
@@ -28,49 +29,10 @@ from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 dtype = torch.bfloat16
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-pipe = QwenImageEditPlusPipeline.from_pretrained("Qwen/Qwen-Image-Edit-2509", 
-                                                transformer= QwenImageTransformer2DModel.from_pretrained("linoyts/Qwen-Image-Edit-Rapid-AIO", 
-                                                                                                         subfolder='transformer',
-                                                                                                         torch_dtype=dtype,
-                                                                                                         device_map='cuda'),torch_dtype=dtype).to(device)
-
-pipe.load_lora_weights(
-        "dx8152/Qwen-Edit-2509-Multiple-angles", 
-        weight_name="镜头转换.safetensors", adapter_name="angles"
-    )
-
-# pipe.load_lora_weights(
-#         "lovis93/next-scene-qwen-image-lora-2509", 
-#         weight_name="next-scene_lora-v2-3000.safetensors", adapter_name="next-scene"
-#     )
-pipe.set_adapters(["angles"], adapter_weights=[1.])
-pipe.fuse_lora(adapter_names=["angles"], lora_scale=1.25)
-# pipe.fuse_lora(adapter_names=["next-scene"], lora_scale=1.)
-pipe.unload_lora_weights()
-
-
-pipe.transformer.__class__ = QwenImageTransformer2DModel
-pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
-
-# transformer_clone = copy.deepcopy(pipe.transformer)
-
-# quantize_(pipe.transformer, Int8WeightOnlyConfig())
-# torch.save(pipe.transformer.state_dict(), "transformer_int8.pt")
-# assert False
-
-# from torchao.quantization import Int8DynamicActivationInt4WeightConfig
-# quantize_(pipe.transformer, Int8DynamicActivationInt4WeightConfig())
-
-optimize_pipeline_(pipe, image=[Image.new("RGB", (1024, 1024))], prompt="prompt", height=1024, width=1024, num_inference_steps=4)
-
-# state_dict = torch.load("transformer_int8.pt")
-# print(state_dict.keys())
-# # state_dict = pipe.transformer.state_dict()
-# print(pipe.transformer.state_dict().keys())
-# zerogpu_weights = ZeroGPUWeights({name: weight for name, weight in state_dict.items()})
-# compiled_transformer = ZeroGPUCompiledModel("transformer.pt2", zerogpu_weights)
-
-# spaces.aoti_apply(compiled_transformer, pipe.transformer)
+exp = Qwen_FA3_AoT_int8()
+exp.load()
+exp.optimize()
+pipe = exp.pipe
 
 
 MAX_SEED = np.iinfo(np.int32).max

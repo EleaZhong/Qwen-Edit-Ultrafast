@@ -4,16 +4,26 @@ import os
 from pathlib import Path
 import random
 import statistics
+import os
+
 import torch
 from PIL import Image
 import pandas as pd
+from spaces.zero.torch.aoti import ZeroGPUCompiledModel, ZeroGPUWeights
+from torchao.quantization import Float8WeightOnlyConfig, Int4WeightOnlyConfig, Int8DynamicActivationInt4WeightConfig, Int8DynamicActivationInt8WeightConfig, quantize_
+from torchao.quantization import Int8WeightOnlyConfig
+import spaces
+import torch
+from torch.utils._pytree import tree_map
+from torchao.utils import get_model_size_in_bytes
 
+from qwenimage.debug import ftimed, print_first_param
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
 from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 from qwenimage.experiment import AbstractExperiment, ExperimentConfig
 from qwenimage.debug import ProfileSession, ftimed
-from qwenimage.optimization import optimize_pipeline_
+from qwenimage.optimization import INDUCTOR_CONFIGS, TRANSFORMER_DYNAMIC_SHAPES, aoti_apply, drain_module_parameters, optimize_pipeline_
 from qwenimage.prompt import build_camera_prompt
 
 
@@ -124,9 +134,6 @@ class QwenBaseExperiment(AbstractExperiment):
 
     @ftimed
     def optimize(self):
-        # pipe.transformer.__class__ = QwenImageTransformer2DModel
-        # pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
-        # optimize_pipeline_(pipe, image=[Image.new("RGB", (1024, 1024))], prompt="prompt", height=1024, width=1024, num_inference_steps=4)
         pass
     
     @ftimed
@@ -181,7 +188,7 @@ class Qwen_FA3(QwenBaseExperiment):
 class Qwen_AoT(QwenBaseExperiment):
     @ftimed
     def optimize(self):
-        self.compiled_transformer = optimize_pipeline_(
+        optimize_pipeline_(
             self.pipe,
             cache_compiled=self.config.cache_compiled,
             quantize=False,
@@ -191,10 +198,7 @@ class Qwen_AoT(QwenBaseExperiment):
                 "num_inference_steps":4
             }
         )
-    
-    def cleanup(self):
-        super().cleanup()
-        del self.compiled_transformer
+
 
 @ExperimentRegistry.register(name="qwen_fa3_aot")
 class Qwen_FA3_AoT(QwenBaseExperiment):
@@ -202,7 +206,7 @@ class Qwen_FA3_AoT(QwenBaseExperiment):
     def optimize(self):
         self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
-        self.compiled_transformer = optimize_pipeline_(
+        optimize_pipeline_(
             self.pipe,
             cache_compiled=self.config.cache_compiled,
             quantize=False,
@@ -214,9 +218,6 @@ class Qwen_FA3_AoT(QwenBaseExperiment):
             }
         )
 
-    def cleanup(self):
-        super().cleanup()
-        del self.compiled_transformer
 
 @ExperimentRegistry.register(name="qwen_fa3_aot_int8")
 class Qwen_FA3_AoT_int8(QwenBaseExperiment):
@@ -224,7 +225,7 @@ class Qwen_FA3_AoT_int8(QwenBaseExperiment):
     def optimize(self):
         self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
-        self.compiled_transformer = optimize_pipeline_(
+        optimize_pipeline_(
             self.pipe,
             cache_compiled=self.config.cache_compiled,
             quantize=True,
@@ -236,6 +237,21 @@ class Qwen_FA3_AoT_int8(QwenBaseExperiment):
             }
         )
 
-    def cleanup(self):
-        super().cleanup()
-        del self.compiled_transformer
+
+@ExperimentRegistry.register(name="qwen_fp8")
+class Qwen_fp8(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        quantize_(self.pipe.transformer, Float8WeightOnlyConfig())
+
+
+@ExperimentRegistry.register(name="qwen_int8")
+class Qwen_int8(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        quantize_(self.pipe.transformer, Int8WeightOnlyConfig())
+

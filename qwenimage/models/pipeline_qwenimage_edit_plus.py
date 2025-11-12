@@ -876,11 +876,12 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                         if XLA_AVAILABLE:
                             xm.mark_step()
 
-        with ctimed("Post (vae)"):
-            self._current_timestep = None
-            if output_type == "latent":
-                image = latents
-            else:
+        # with ctimed("Post (vae)"):
+        self._current_timestep = None
+        if output_type == "latent":
+            image = latents
+        else:
+            with ctimed("pre decode"):
                 latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
                 latents = latents.to(self.vae.dtype)
                 latents_mean = (
@@ -892,14 +893,17 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                     latents.device, latents.dtype
                 )
                 latents = latents / latents_std + latents_mean
-                with ctimed("vae.decode"):
-                    image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
+            with ctimed("vae.decode"):
+                image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
+            with ctimed("post process"):
                 image = self.image_processor.postprocess(image, output_type=output_type)
 
-            # Offload all models
+
+        # Offload all models
+        with ctimed("offload"):
             self.maybe_free_model_hooks()
 
-            if not return_dict:
-                return (image,)
+        if not return_dict:
+            return (image,)
 
         return QwenImagePipelineOutput(images=image)
