@@ -54,7 +54,7 @@ optimize_pipeline_(pipe, image=[Image.new("RGB", (1024, 1024)), Image.new("RGB",
 MAX_SEED = np.iinfo(np.int32).max
 
 
-# @spaces.GPU
+@spaces.GPU
 @ftimed
 def infer_camera_edit(
     image,
