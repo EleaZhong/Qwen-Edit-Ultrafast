@@ -66,6 +66,7 @@ class PipeInputs:
     }
     
     def __init__(self, seed=42):
+        self.seed=seed
         param_keys = list(self.camera_params.keys())
         param_values = list(self.camera_params.values())
         param_keys.append("image")
@@ -77,13 +78,15 @@ class PipeInputs:
         print(f"{len(self.total_inputs)} input combinations")
         random.seed(seed)
         random.shuffle(self.total_inputs)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.generator = torch.Generator(device=device).manual_seed(seed)
+        self.generator = None
 
     def __len__(self):
         return len(self.total_inputs)
 
     def __getitem__(self, ind):
+        if self.generator is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.generator = torch.Generator(device=device).manual_seed(self.seed)
         inputs = self.total_inputs[ind]
         cam_prompt_params = {k:v for k,v in inputs.items() if k in self.camera_params}
         prompt = build_camera_prompt(**cam_prompt_params)
