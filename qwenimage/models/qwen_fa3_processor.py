@@ -2,6 +2,7 @@
 Paired with a good language model. Thanks!
 """
 
+from diffusers.models.attention_processor import Attention
 import torch
 from typing import Optional, Tuple
 from diffusers.models.transformers.transformer_qwenimage import apply_rotary_emb_qwen
@@ -39,6 +40,30 @@ def _(q, k, v, **kwargs):
     return meta_q #, q.new_empty((q.size(0), q.size(2), q.size(1)), dtype=torch.float32)
 
 
+def _get_projections(attn: Attention, hidden_states, encoder_hidden_states):
+    img_q = attn.to_q(hidden_states)
+    img_k = attn.to_k(hidden_states)
+    img_v = attn.to_v(hidden_states)
+
+    txt_q = attn.add_q_proj(encoder_hidden_states)
+    txt_k = attn.add_k_proj(encoder_hidden_states)
+    txt_v = attn.add_v_proj(encoder_hidden_states)
+
+    return img_q, img_k, img_v, txt_q, txt_k, txt_v
+
+
+def _get_fused_projections(attn: Attention, hidden_states, encoder_hidden_states):
+    img_q, img_k, img_v = attn.to_qkv(hidden_states).chunk(3, dim=-1)
+    txt_q, txt_k, txt_v = attn.to_added_qkv(encoder_hidden_states).chunk(3, dim=-1)
+    return img_q, img_k, img_v, txt_q, txt_k, txt_v
+
+
+def _get_qkv_projections(attn: Attention, hidden_states, encoder_hidden_states):
+    if attn.fused_projections:
+        return _get_fused_projections(attn, hidden_states, encoder_hidden_states)
+    return _get_projections(attn, hidden_states, encoder_hidden_states)
+
+
 class QwenDoubleStreamAttnProcessorFA3:
     """
     FA3-based attention processor for Qwen double-stream architecture.
@@ -74,18 +99,22 @@ class QwenDoubleStreamAttnProcessorFA3:
 
         _ensure_fa3_available()
 
+        img_q, img_k, img_v, txt_q, txt_k, txt_v = _get_qkv_projections(
+            attn, hidden_states, encoder_hidden_states
+        )
+        
         B, S_img, _ = hidden_states.shape
         S_txt = encoder_hidden_states.shape[1]
 
-        # ---- QKV projections (image/sample stream) ----
-        img_q = attn.to_q(hidden_states)   # (B, S_img, D)
-        img_k = attn.to_k(hidden_states)
-        img_v = attn.to_v(hidden_states)
+        # # ---- QKV projections (image/sample stream) ----
+        # img_q = attn.to_q(hidden_states)   # (B, S_img, D)
+        # img_k = attn.to_k(hidden_states)
+        # img_v = attn.to_v(hidden_states)
 
-        # ---- QKV projections (text/context stream) ----
-        txt_q = attn.add_q_proj(encoder_hidden_states)  # (B, S_txt, D)
-        txt_k = attn.add_k_proj(encoder_hidden_states)
-        txt_v = attn.add_v_proj(encoder_hidden_states)
+        # # ---- QKV projections (text/context stream) ----
+        # txt_q = attn.add_q_proj(encoder_hidden_states)  # (B, S_txt, D)
+        # txt_k = attn.add_k_proj(encoder_hidden_states)
+        # txt_v = attn.add_v_proj(encoder_hidden_states)
 
         # ---- Reshape to (B, S, H, D_h) ----
         H = attn.heads

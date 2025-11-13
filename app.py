@@ -18,7 +18,7 @@ from torchao.quantization import quantize_
 from torchao.quantization import Int8WeightOnlyConfig
 
 from qwenimage.debug import ctimed, ftimed
-from qwenimage.experiments.experiments_qwen import Qwen_FA3_AoT_fp8, Qwen_FA3_AoT_int8, QwenBaseExperiment
+from qwenimage.experiments.experiments_qwen import Qwen_FA3_AoT_fp8, Qwen_FA3_AoT_int8, QwenBaseExperiment, ExperimentRegistry
 from qwenimage.optimization import optimize_pipeline_
 from qwenimage.prompt import build_camera_prompt
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
@@ -29,8 +29,8 @@ from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 dtype = torch.bfloat16
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-exp = Qwen_FA3_AoT_int8()
-# exp = Qwen_FA3_AoT_fp8()
+exp = ExperimentRegistry.get("qwen_lightning_lora")()
+
 exp.load()
 
 @spaces.GPU(duration=1500)

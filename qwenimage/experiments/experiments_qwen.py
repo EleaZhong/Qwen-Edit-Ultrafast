@@ -1,11 +1,13 @@
 import itertools
 import json
+import math
 import os
 from pathlib import Path
 import random
 import statistics
 import os
 
+from diffusers.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 import torch
 from PIL import Image
 import pandas as pd
@@ -121,7 +123,7 @@ class QwenBaseExperiment(AbstractExperiment):
                 "linoyts/Qwen-Image-Edit-Rapid-AIO", 
                 subfolder='transformer',
                 torch_dtype=dtype,
-                device_map='cuda'),
+                device_map=device),
             torch_dtype=dtype,
         ).to(device)
 
@@ -178,6 +180,101 @@ class QwenBaseExperiment(AbstractExperiment):
     def cleanup(self):
         del self.pipe.transformer
         del self.pipe
+
+@ExperimentRegistry.register(name="qwen_lightning_lora")
+class Qwen_Lightning_Lora(QwenBaseExperiment):
+    @ftimed
+    def load(self):
+        dtype = torch.bfloat16
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # Scheduler configuration for Lightning
+        scheduler_config = {
+            "base_image_seq_len": 256,
+            "base_shift": math.log(3),  # We use shift=3 in distillation 
+            "invert_sigmas": False,
+            "max_image_seq_len": 8192,
+            "max_shift": math.log(3),  # We use shift=3 in distillation
+            "num_train_timesteps": 1000,
+            "shift": 1.0,
+            "shift_terminal": None,  # set shift_terminal to None
+            "stochastic_sampling": False,
+            "time_shift_type": "exponential",
+            "use_beta_sigmas": False,
+            "use_dynamic_shifting": True,
+            "use_exponential_sigmas": False,
+            "use_karras_sigmas": False,
+        }
+        scheduler = FlowMatchEulerDiscreteScheduler.from_config(scheduler_config) # TODO: check scheduler sync issue mentioned by https://pytorch.org/blog/presenting-flux-fast-making-flux-go-brrr-on-h100s/
+
+        dtype = torch.bfloat16
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        pipe = QwenImageEditPlusPipeline.from_pretrained(
+            "Qwen/Qwen-Image-Edit-2509", 
+            transformer=QwenImageTransformer2DModel.from_pretrained( # use our own model
+                "Qwen/Qwen-Image-Edit-2509",
+                subfolder='transformer',
+                torch_dtype=dtype,
+                device_map=device
+            ),
+            scheduler=scheduler,
+            torch_dtype=dtype,
+        ).to(device)
+
+        pipe.load_lora_weights(
+            "dx8152/Qwen-Edit-2509-Multiple-angles", 
+            weight_name="镜头转换.safetensors",
+            adapter_name="angles"
+        )
+
+        pipe.load_lora_weights(
+            "lightx2v/Qwen-Image-Lightning", 
+            weight_name="Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+            adapter_name="lightning",
+        )
+
+        pipe.set_adapters(["angles", "lightning"], adapter_weights=[1.25, 1.])
+        pipe.fuse_lora(adapter_names=["angles", "lightning"], lora_scale=1.0)
+        pipe.unload_lora_weights()
+        self.pipe = pipe
+
+
+@ExperimentRegistry.register(name="qwen_lightning_lora_3step")
+class Qwen_Lightning_Lora_3step(Qwen_Lightning_Lora):
+    @ftimed
+    def run_once(self, *args, **kwargs):
+        kwargs["num_inference_steps"] = 3
+        return self.pipe(*args, **kwargs).images[0]
+
+@ExperimentRegistry.register(name="qwen_base_3step")
+class Qwen_Base_3step(QwenBaseExperiment):
+    @ftimed
+    def run_once(self, *args, **kwargs):
+        kwargs["num_inference_steps"] = 3
+        return self.pipe(*args, **kwargs).images[0]
+
+@ExperimentRegistry.register(name="qwen_lightning_lora_2step")
+class Qwen_Lightning_Lora_3step(Qwen_Lightning_Lora):
+    @ftimed
+    def run_once(self, *args, **kwargs):
+        kwargs["num_inference_steps"] = 2
+        return self.pipe(*args, **kwargs).images[0]
+
+@ExperimentRegistry.register(name="qwen_base_2step")
+class Qwen_Base_3step(QwenBaseExperiment):
+    @ftimed
+    def run_once(self, *args, **kwargs):
+        kwargs["num_inference_steps"] = 2
+        return self.pipe(*args, **kwargs).images[0]
+
+@ExperimentRegistry.register(name="qwen_fa3_fuse")
+class Qwen_Fuse(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        self.pipe.transformer.fuse_qkv_projections()
 
 
 @ExperimentRegistry.register(name="qwen_fa3")

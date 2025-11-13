@@ -25,7 +25,7 @@ from transformers.models.qwen2_vl import Qwen2VLProcessor
 
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.loaders import QwenImageLoraLoaderMixin
-from diffusers.models import AutoencoderKLQwenImage, QwenImageTransformer2DModel
+from diffusers.models import AutoencoderKLQwenImage
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import is_torch_xla_available, logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
@@ -33,6 +33,7 @@ from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.qwenimage.pipeline_output import QwenImagePipelineOutput
 
 from qwenimage.debug import ctimed, ftimed
+from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
 
 
 if is_torch_xla_available():
