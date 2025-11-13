@@ -116,6 +116,7 @@ class QwenBaseExperiment(AbstractExperiment):
     def load(self):
         dtype = torch.bfloat16
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"experiment load cuda: {torch.cuda.is_available()=}")
 
         pipe = QwenImageEditPlusPipeline.from_pretrained(
             "Qwen/Qwen-Image-Edit-2509", 

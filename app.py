@@ -29,15 +29,17 @@ from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 dtype = torch.bfloat16
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+print(f"main cuda: {torch.cuda.is_available()=}")
+
+exp = ExperimentRegistry.get("qwen_lightning_fa3_aot_int8_fuse_2step")()
+exp.load()
 
 @spaces.GPU(duration=1500)
-def optim_pipe():
-    exp = ExperimentRegistry.get("qwen_lightning_fa3_aot_int8_fuse_2step")()
-    exp.load()
+def optim_pipe(exp):
+    print(f"func cuda: {torch.cuda.is_available()=}")
     exp.optimize()
-    return exp.pipe
 
-pipe = optim_pipe()
+optim_pipe(exp)
 
 
 MAX_SEED = np.iinfo(np.int32).max
@@ -85,7 +87,7 @@ def infer_camera_edit(
 
         if prompt == "no camera movement":
             return image, seed, prompt
-    result = pipe(
+    result = exp.pipe(
         image=pil_images,
         prompt=prompt,
         height=height if height != 0 else None,
