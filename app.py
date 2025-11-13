@@ -34,12 +34,13 @@ print(f"main cuda: {torch.cuda.is_available()=}")
 exp = ExperimentRegistry.get("qwen_lightning_fa3_aot_int8_fuse_2step")()
 exp.load()
 
+
 @spaces.GPU(duration=1500)
-def optim_pipe(exp):
+def optim_pipe():
     print(f"func cuda: {torch.cuda.is_available()=}")
     exp.optimize()
 
-optim_pipe(exp)
+optim_pipe()
 
 
 MAX_SEED = np.iinfo(np.int32).max
