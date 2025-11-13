@@ -29,16 +29,15 @@ from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 dtype = torch.bfloat16
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-exp = ExperimentRegistry.get("qwen_lightning_lora")()
-
-exp.load()
 
 @spaces.GPU(duration=1500)
 def optim_pipe(exp):
+    exp = ExperimentRegistry.get("qwen_lightning_fa3_aot_int8_fuse_2step")()
+    exp.load()
     exp.optimize()
     return exp.pipe
 
-pipe = optim_pipe(exp)
+pipe = optim_pipe()
 
 
 MAX_SEED = np.iinfo(np.int32).max
