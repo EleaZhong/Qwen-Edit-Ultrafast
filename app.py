@@ -29,7 +29,7 @@ from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 dtype = torch.bfloat16
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-@spaces.GPU
+@spaces.GPU(duration=1500)
 def load_pipe():
     exp = Qwen_FA3_AoT_int8()
     # exp = Qwen_FA3_AoT_fp8()
