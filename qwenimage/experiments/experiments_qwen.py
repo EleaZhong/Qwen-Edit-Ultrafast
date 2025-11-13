@@ -264,7 +264,7 @@ class Qwen_int8(QwenBaseExperiment):
 @ExperimentRegistry.register(name="qwen_fa3_aot_fp8")
 class Qwen_FA3_AoT_fp8(QwenBaseExperiment):
     @ftimed
-    @spaces.GPU()
+    # @spaces.GPU()
     def optimize(self):
         self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
