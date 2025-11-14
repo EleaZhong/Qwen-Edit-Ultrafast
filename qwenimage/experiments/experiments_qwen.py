@@ -22,7 +22,7 @@ from torchao.utils import get_model_size_in_bytes
 
 from qwenimage.debug import ctimed, ftimed, print_first_param
 from qwenimage.models.first_block_cache import apply_cache_on_pipe
-from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
+from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline, calculate_dimensions
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
 from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 from qwenimage.experiment import AbstractExperiment, ExperimentConfig
@@ -73,7 +73,7 @@ class ExperimentRegistry:
 
 
 class PipeInputs:
-    images = Path("scripts/assets/").iterdir()
+    images = Path("scripts/assets/test_images_v1/").iterdir()
 
     camera_params = {
         "rotate_deg": [-90,-45,0,45,90],
@@ -753,3 +753,56 @@ class Qwen_lightning_FA3_AoT_autoquant_fuse(Qwen_Lightning_Lora):
 
 
         aoti_apply(compiled_transformer, self.pipe.transformer)
+
+class Qwen_Downsize_Mixin:
+    def run_once(self, *args, **kwargs):
+        image = kwargs["image"][0]
+        w,h = image.size
+        real_w, real_h = calculate_dimensions(1024 * 1024, w / h)
+        down_w, down_h = calculate_dimensions(self.size * self.size, w / h)
+        image = image.resize((down_w, down_h))
+        kwargs["image"] = [image]
+        kwargs["vae_image_override"] = self.size * self.size
+        kwargs["width"] = real_w
+        kwargs["height"] = real_h
+        return self.pipe(*args, **kwargs).images[0]
+
+@ExperimentRegistry.register(name="qwen_downsize768")
+class Qwen_Downsize768(Qwen_Downsize_Mixin, QwenBaseExperiment):
+    size = 768
+
+@ExperimentRegistry.register(name="qwen_downsize512")
+class Qwen_Downsize512(Qwen_Downsize_Mixin, QwenBaseExperiment):
+    size = 512
+
+@ExperimentRegistry.register(name="qwen_lightning_fa3_aot_int8_fuse_2step_fbcache_055_downsize512")
+class Qwen_Lightning_FA3_AoT_int8_fuse_2step_FBCache055_Downsize512(Qwen_Lightning_Lora):
+    size = 512
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        self.pipe.transformer.fuse_qkv_projections()
+        apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.55,)
+        optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=True,
+            suffix="_fa3_fuse",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+    def run_once(self, *args, **kwargs):
+        image = kwargs["image"][0]
+        w,h = image.size
+        real_w, real_h = calculate_dimensions(1024 * 1024, w / h)
+        down_w, down_h = calculate_dimensions(self.size * self.size, w / h)
+        image = image.resize((down_w, down_h))
+        kwargs["image"] = [image]
+        kwargs["vae_image_override"] = self.size * self.size
+        kwargs["width"] = real_w
+        kwargs["height"] = real_h
+        kwargs["num_inference_steps"] = 2
+        return self.pipe(*args, **kwargs).images[0]

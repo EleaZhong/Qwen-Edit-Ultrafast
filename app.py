@@ -31,7 +31,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 print(f"main cuda: {torch.cuda.is_available()=}")
 
-exp = ExperimentRegistry.get("qwen_lightning_fa3_aot_int8_fuse_2step")()
+exp = ExperimentRegistry.get("qwen_lightning_fa3_aot_int8_fuse_2step_fbcache_055_downsize512")()
 exp.load()
 
 
@@ -88,7 +88,7 @@ def infer_camera_edit(
 
         if prompt == "no camera movement":
             return image, seed, prompt
-    result = exp.pipe(
+    result = exp.run_once(
         image=pil_images,
         prompt=prompt,
         height=height if height != 0 else None,

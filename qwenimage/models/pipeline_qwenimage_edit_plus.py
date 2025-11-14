@@ -549,6 +549,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
         channels_last_format: bool = False,
+        vae_image_override: int | None = None
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -667,6 +668,10 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             self._current_timestep = None
             self._interrupt = False
             self.channels_last_format = channels_last_format
+            if vae_image_override is not None:
+                vae_image_size = vae_image_override
+            else:
+                vae_image_size = VAE_IMAGE_SIZE
 
             # 2. Define call parameters
             if prompt is not None and isinstance(prompt, str):
@@ -690,7 +695,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                     condition_width, condition_height = calculate_dimensions(
                         CONDITION_IMAGE_SIZE, image_width / image_height
                     )
-                    vae_width, vae_height = calculate_dimensions(VAE_IMAGE_SIZE, image_width / image_height)
+                    vae_width, vae_height = calculate_dimensions(vae_image_size, image_width / image_height)
                     condition_image_sizes.append((condition_width, condition_height))
                     vae_image_sizes.append((vae_width, vae_height))
                     condition_images.append(self.image_processor.resize(img, condition_height, condition_width))
