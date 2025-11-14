@@ -548,6 +548,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
+        channels_last_format: bool = False,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -665,6 +666,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             self._attention_kwargs = attention_kwargs
             self._current_timestep = None
             self._interrupt = False
+            self.channels_last_format = channels_last_format
 
             # 2. Define call parameters
             if prompt is not None and isinstance(prompt, str):

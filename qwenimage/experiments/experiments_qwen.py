@@ -12,6 +12,7 @@ import torch
 from PIL import Image
 import pandas as pd
 from spaces.zero.torch.aoti import ZeroGPUCompiledModel, ZeroGPUWeights
+from torchao import autoquant
 from torchao.quantization import Float8DynamicActivationFloat8WeightConfig, Float8WeightOnlyConfig, Int4WeightOnlyConfig, Int8DynamicActivationInt4WeightConfig, Int8DynamicActivationInt8WeightConfig, quantize_
 from torchao.quantization import Int8WeightOnlyConfig
 import spaces
@@ -19,7 +20,8 @@ import torch
 from torch.utils._pytree import tree_map
 from torchao.utils import get_model_size_in_bytes
 
-from qwenimage.debug import ftimed, print_first_param
+from qwenimage.debug import ctimed, ftimed, print_first_param
+from qwenimage.models.first_block_cache import apply_cache_on_pipe
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
 from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
@@ -48,6 +50,19 @@ class ExperimentRegistry:
             raise KeyError(f"{name} not in {list(cls.registry.keys())}")
         return cls.registry[name]
     
+    @classmethod
+    def filter(cls, startswith=None, endswith=None, contains=None, not_contain=None):
+        keys = list(cls.registry.keys())
+        if startswith is not None:
+            keys = [k for k in keys if k.startswith(startswith)]
+        if endswith is not None:
+            keys = [k for k in keys if k.endswith(endswith)]
+        if contains is not None:
+            keys = [k for k in keys if contains in k]
+        if not_contain is not None:
+            keys = [k for k in keys if not_contain not in k]
+        return keys
+
     @classmethod
     def keys(cls):
         return list(cls.registry.keys())
@@ -142,7 +157,6 @@ class QwenBaseExperiment(AbstractExperiment):
     def optimize(self):
         pass
     
-    @ftimed
     def run_once(self, *args, **kwargs):
         return self.pipe(*args, **kwargs).images[0]
 
@@ -152,7 +166,8 @@ class QwenBaseExperiment(AbstractExperiment):
 
         for i in range(self.config.iterations):
             inputs = self.pipe_inputs[i]
-            output = self.run_once(**inputs)
+            with ctimed("run_once"):
+                output = self.run_once(**inputs)
             output.save(output_save_dir / f"{i:03d}.jpg")
 
     def report(self):
@@ -181,6 +196,40 @@ class QwenBaseExperiment(AbstractExperiment):
     def cleanup(self):
         del self.pipe.transformer
         del self.pipe
+
+@ExperimentRegistry.register(name="qwen_50step")
+class Qwen_50Step(QwenBaseExperiment):
+    @ftimed
+    def load(self):
+        dtype = torch.bfloat16
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"experiment load cuda: {torch.cuda.is_available()=}")
+
+        pipe = QwenImageEditPlusPipeline.from_pretrained(
+            "Qwen/Qwen-Image-Edit-2509", 
+            transformer=QwenImageTransformer2DModel.from_pretrained( # use our own model
+                "Qwen/Qwen-Image-Edit-2509",
+                subfolder='transformer',
+                torch_dtype=dtype,
+                device_map=device
+            ),
+            torch_dtype=dtype,
+        ).to(device)
+
+        pipe.load_lora_weights(
+            "dx8152/Qwen-Edit-2509-Multiple-angles", 
+            weight_name="镜头转换.safetensors", adapter_name="angles"
+        )
+
+        pipe.set_adapters(["angles"], adapter_weights=[1.])
+        pipe.fuse_lora(adapter_names=["angles"], lora_scale=1.25)
+        pipe.unload_lora_weights()
+        self.pipe = pipe
+
+    def run_once(self, *args, **kwargs):
+        kwargs["num_inference_steps"] = 50
+        return self.pipe(*args, **kwargs).images[0]
+
 
 @ExperimentRegistry.register(name="qwen_lightning_lora")
 class Qwen_Lightning_Lora(QwenBaseExperiment):
@@ -243,28 +292,24 @@ class Qwen_Lightning_Lora(QwenBaseExperiment):
 
 @ExperimentRegistry.register(name="qwen_lightning_lora_3step")
 class Qwen_Lightning_Lora_3step(Qwen_Lightning_Lora):
-    @ftimed
     def run_once(self, *args, **kwargs):
         kwargs["num_inference_steps"] = 3
         return self.pipe(*args, **kwargs).images[0]
 
 @ExperimentRegistry.register(name="qwen_base_3step")
 class Qwen_Base_3step(QwenBaseExperiment):
-    @ftimed
     def run_once(self, *args, **kwargs):
         kwargs["num_inference_steps"] = 3
         return self.pipe(*args, **kwargs).images[0]
 
 @ExperimentRegistry.register(name="qwen_lightning_lora_2step")
 class Qwen_Lightning_Lora_2step(Qwen_Lightning_Lora):
-    @ftimed
     def run_once(self, *args, **kwargs):
         kwargs["num_inference_steps"] = 2
         return self.pipe(*args, **kwargs).images[0]
 
 @ExperimentRegistry.register(name="qwen_base_2step")
 class Qwen_Base_2step(QwenBaseExperiment):
-    @ftimed
     def run_once(self, *args, **kwargs):
         kwargs["num_inference_steps"] = 2
         return self.pipe(*args, **kwargs).images[0]
@@ -582,20 +627,129 @@ class Qwen_Lightning_FA3_AoT_int8_fuse(Qwen_Lightning_Lora):
 
 @ExperimentRegistry.register(name="qwen_lightning_fa3_aot_int8_fuse_2step")
 class Qwen_Lightning_FA3_AoT_int8_fuse_2step(Qwen_Lightning_FA3_AoT_int8_fuse):
-    @ftimed
     def run_once(self, *args, **kwargs):
         kwargs["num_inference_steps"] = 2
         return self.pipe(*args, **kwargs).images[0]
 
+@ExperimentRegistry.register(name="qwen_lightning_fa3_aot_int8_fuse_3step")
+class Qwen_Lightning_FA3_AoT_int8_fuse_3step(Qwen_Lightning_FA3_AoT_int8_fuse):
+    def run_once(self, *args, **kwargs):
+        kwargs["num_inference_steps"] = 3
+        return self.pipe(*args, **kwargs).images[0]
+
+@ExperimentRegistry.register(name="qwen_fa3_aot_int8_fuse_2step")
+class Qwen_FA3_AoT_int8_fuse_2step(Qwen_FA3_AoT_int8_fuse):
+    def run_once(self, *args, **kwargs):
+        kwargs["num_inference_steps"] = 2
+        return self.pipe(*args, **kwargs).images[0]
+
+@ExperimentRegistry.register(name="qwen_fa3_aot_int8_fuse_3step")
+class Qwen_FA3_AoT_int8_fuse_3step(Qwen_FA3_AoT_int8_fuse):
+    def run_once(self, *args, **kwargs):
+        kwargs["num_inference_steps"] = 3
+        return self.pipe(*args, **kwargs).images[0]
 
 @ExperimentRegistry.register(name="qwen_channels_last")
 class Qwen_Channels_Last(QwenBaseExperiment):
     """
-    This experiment is fully useless: channels last format only works with NCHW tensors, 
+    This experiment may be useless: channels last format only works with NCHW tensors, 
     i.e. 2D CNNs, transformer is 1D and vae is 3D, plus, for it to work the inputs need to 
     be converted in-pipe as well. left for reference.
     """
     @ftimed
     def optimize(self):
-        self.pipe.vae = self.pipe.vae.to(memory_format=torch.channels_last)
+        # self.pipe.vae = self.pipe.vae.to(memory_format=torch.channels_last_3d)
         self.pipe.transformer = self.pipe.transformer.to(memory_format=torch.channels_last)
+
+@ExperimentRegistry.register(name="qwen_fbcache_05")
+class Qwen_FBCache_05(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.5,)
+
+
+@ExperimentRegistry.register(name="qwen_fbcache_055")
+class Qwen_FBCache_055(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.55,)
+
+@ExperimentRegistry.register(name="qwen_fbcache_054")
+class Qwen_FBCache_054(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.54,)
+
+@ExperimentRegistry.register(name="qwen_fbcache_053")
+class Qwen_FBCache_053(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.53,)
+
+@ExperimentRegistry.register(name="qwen_fbcache_052")
+class Qwen_FBCache_052(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.52,)
+
+@ExperimentRegistry.register(name="qwen_fbcache_051")
+class Qwen_FBCache_051(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.51,)
+
+
+# @ExperimentRegistry.register(name="qwen_lightning_fa3_aot_autoquant_fuse")
+class Qwen_lightning_FA3_AoT_autoquant_fuse(Qwen_Lightning_Lora):
+    """
+    Seemingly not working with AoT export
+    """
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        self.pipe.transformer.fuse_qkv_projections()
+
+        pipe_kwargs={
+            "image": [Image.new("RGB", (1024, 1024))],
+            "prompt":"prompt",
+            "num_inference_steps":4
+        }
+        suffix="_autoquant_fa3_fuse"
+
+        cache_compiled=self.config.cache_compiled
+        
+        transformer_pt2_cache_path = f"checkpoints/transformer_{suffix}_archive.pt2"
+        transformer_weights_cache_path = f"checkpoints/transformer_{suffix}_weights.pt"
+
+        print(f"original model size: {get_model_size_in_bytes(self.pipe.transformer) / 1024 / 1024} MB")
+        autoquant(self.pipe.transformer, error_on_unseen=False)
+        print_first_param(self.pipe.transformer)
+        print(f"quantized model size: {get_model_size_in_bytes(self.pipe.transformer) / 1024 / 1024} MB")
+
+        inductor_config = INDUCTOR_CONFIGS
+
+        if os.path.isfile(transformer_pt2_cache_path) and cache_compiled:
+            drain_module_parameters(self.pipe.transformer)
+            zerogpu_weights = torch.load(transformer_weights_cache_path, weights_only=False)
+            compiled_transformer = ZeroGPUCompiledModel(transformer_pt2_cache_path, zerogpu_weights)
+        else:
+            with spaces.aoti_capture(self.pipe.transformer) as call:
+                self.pipe(**pipe_kwargs)
+
+            dynamic_shapes = tree_map(lambda t: None, call.kwargs)
+            dynamic_shapes |= TRANSFORMER_DYNAMIC_SHAPES
+            
+            exported = torch.export.export(
+                mod=self.pipe.transformer,
+                args=call.args,
+                kwargs=call.kwargs,
+                dynamic_shapes=dynamic_shapes,
+            )
+
+            compiled_transformer = spaces.aoti_compile(exported, inductor_config)
+            with open(transformer_pt2_cache_path, "wb") as f:
+                f.write(compiled_transformer.archive_file.getvalue())
+            torch.save(compiled_transformer.weights, transformer_weights_cache_path)
+
+
+        aoti_apply(compiled_transformer, self.pipe.transformer)

@@ -15,6 +15,7 @@
 import functools
 import math
 from typing import Any, Dict, List, Optional, Tuple, Union
+import warnings
 
 import torch
 import torch.nn as nn
@@ -615,6 +616,7 @@ class QwenImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
 
         for index_block, block in enumerate(self.transformer_blocks):
             if torch.is_grad_enabled() and self.gradient_checkpointing:
+                warnings.warn("Gradient ckpt?")
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
                     block,
                     hidden_states,
