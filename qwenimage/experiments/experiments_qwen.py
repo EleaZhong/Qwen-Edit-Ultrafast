@@ -269,11 +269,34 @@ class Qwen_Base_2step(QwenBaseExperiment):
         kwargs["num_inference_steps"] = 2
         return self.pipe(*args, **kwargs).images[0]
 
-@ExperimentRegistry.register(name="qwen_fa3_fuse")
+@ExperimentRegistry.register(name="qwen_fuse")
 class Qwen_Fuse(QwenBaseExperiment):
     @ftimed
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
+        self.pipe.transformer.fuse_qkv_projections()
+
+
+@ExperimentRegistry.register(name="qwen_fuse_aot")
+class Qwen_Fuse_AoT(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.fuse_qkv_projections()
+        optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=False,
+            suffix="_fuse",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+
+@ExperimentRegistry.register(name="qwen_fa3_fuse")
+class Qwen_FA3_Fuse(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
 
@@ -282,7 +305,6 @@ class Qwen_Fuse(QwenBaseExperiment):
 class Qwen_FA3(QwenBaseExperiment):
     @ftimed
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
 
 @ExperimentRegistry.register(name="qwen_aot")
@@ -305,7 +327,6 @@ class Qwen_AoT(QwenBaseExperiment):
 class Qwen_FA3_AoT(QwenBaseExperiment):
     @ftimed
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         optimize_pipeline_(
             self.pipe,
@@ -324,7 +345,6 @@ class Qwen_FA3_AoT(QwenBaseExperiment):
 class Qwen_FA3_AoT_int8(QwenBaseExperiment):
     @ftimed
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         optimize_pipeline_(
             self.pipe,
@@ -343,7 +363,6 @@ class Qwen_FA3_AoT_int8(QwenBaseExperiment):
 class Qwen_fp8(QwenBaseExperiment):
     @ftimed
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         quantize_(self.pipe.transformer, Float8WeightOnlyConfig())
 
@@ -352,7 +371,6 @@ class Qwen_fp8(QwenBaseExperiment):
 class Qwen_int8(QwenBaseExperiment):
     @ftimed
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         quantize_(self.pipe.transformer, Int8WeightOnlyConfig())
 
@@ -364,7 +382,6 @@ class Qwen_FA3_AoT_fp8(QwenBaseExperiment):
     @ftimed
     # @spaces.GPU()
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         pipe_kwargs={
             "image": [Image.new("RGB", (1024, 1024))],
@@ -417,7 +434,6 @@ class Qwen_FA3_AoT_fp8_fuse(QwenBaseExperiment):
     @ftimed
     # @spaces.GPU()
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
 
@@ -473,7 +489,6 @@ class Qwen_FA3_AoT_fp8_fuse(QwenBaseExperiment):
 class Qwen_FA3_AoT_int8_fuse(QwenBaseExperiment):
     @ftimed
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
         optimize_pipeline_(
@@ -495,7 +510,6 @@ class Qwen_lightning_FA3_AoT_fp8_fuse(Qwen_Lightning_Lora):
     @ftimed
     # @spaces.GPU()
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
 
@@ -551,7 +565,6 @@ class Qwen_lightning_FA3_AoT_fp8_fuse(Qwen_Lightning_Lora):
 class Qwen_Lightning_FA3_AoT_int8_fuse(Qwen_Lightning_Lora):
     @ftimed
     def optimize(self):
-        self.pipe.transformer.__class__ = QwenImageTransformer2DModel
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
         optimize_pipeline_(
@@ -573,3 +586,16 @@ class Qwen_Lightning_FA3_AoT_int8_fuse_2step(Qwen_Lightning_FA3_AoT_int8_fuse):
     def run_once(self, *args, **kwargs):
         kwargs["num_inference_steps"] = 2
         return self.pipe(*args, **kwargs).images[0]
+
+
+@ExperimentRegistry.register(name="qwen_channels_last")
+class Qwen_Channels_Last(QwenBaseExperiment):
+    """
+    This experiment is fully useless: channels last format only works with NCHW tensors, 
+    i.e. 2D CNNs, transformer is 1D and vae is 3D, plus, for it to work the inputs need to 
+    be converted in-pipe as well. left for reference.
+    """
+    @ftimed
+    def optimize(self):
+        self.pipe.vae = self.pipe.vae.to(memory_format=torch.channels_last)
+        self.pipe.transformer = self.pipe.transformer.to(memory_format=torch.channels_last)

@@ -15,6 +15,7 @@
 import inspect
 import math
 from typing import Any, Callable, Dict, List, Optional, Union
+import warnings
 
 import numpy as np
 import torch
@@ -32,7 +33,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.qwenimage.pipeline_output import QwenImagePipelineOutput
 
-from qwenimage.debug import ctimed, ftimed
+from qwenimage.debug import ctimed, ftimed, texam
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
 
 
@@ -835,6 +836,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                             noise_pred = noise_pred[:, : latents.size(1)]
 
                         if do_true_cfg:
+                            warnings.warn("doing true CFG")
                             with self.transformer.cache_context("uncond"):
                                 neg_noise_pred = self.transformer(
                                     hidden_states=latent_model_input,

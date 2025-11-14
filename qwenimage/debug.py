@@ -147,7 +147,7 @@ def print_first_param(module):
 def first_param(module):
     return list(module.parameters())[0]
 
-def fdebug(func=None, *, exclude=None):
+def fdebug(func=None, *, exclude=None, print_input=True, print_output=True):
     if exclude is None:
         exclude = []
     elif isinstance(exclude, str):
@@ -165,9 +165,11 @@ def fdebug(func=None, *, exclude=None):
             args_pairs = ", ".join(f"{name}={value}" for name, value in zip(arg_names, arg_vals) if name not in exclude)
             kwargs_pairs = ", ".join(f"{k}={v}" for k, v in kwargs.items() if k not in exclude)
             all_args = ", ".join(filter(None, [args_pairs, kwargs_pairs]))
-            print(f"Calling {func.__name__}({all_args})")
+            if print_input:
+                print(f"Calling {func.__name__}({all_args})")
             result = func(*args, **kwargs)
-            print(f"{func.__name__} returned {str(result)+str(result.shape) if isinstance(result, torch.Tensor) else result}")
+            if print_output:
+                print(f"{func.__name__} returned {str(result)+str(result.shape) if isinstance(result, torch.Tensor) else result}")
             return result
         return wrapper
 

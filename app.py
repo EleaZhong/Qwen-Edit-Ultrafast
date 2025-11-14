@@ -163,7 +163,7 @@ with gr.Blocks(theme=gr.themes.Citrus(), css=css) as demo:
                     seed = gr.Slider(label="Seed", minimum=0, maximum=MAX_SEED, step=1, value=0)
                     randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
                     true_guidance_scale = gr.Slider(label="True Guidance Scale", minimum=1.0, maximum=10.0, step=0.1, value=1.0)
-                    num_inference_steps = gr.Slider(label="Inference Steps", minimum=1, maximum=40, step=1, value=3)
+                    num_inference_steps = gr.Slider(label="Inference Steps", minimum=1, maximum=40, step=1, value=2)
                     height = gr.Slider(label="Height", minimum=256, maximum=2048, step=8, value=1024)
                     width = gr.Slider(label="Width", minimum=256, maximum=2048, step=8, value=1024)
 

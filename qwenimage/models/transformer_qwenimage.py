@@ -33,6 +33,8 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
 
+from qwenimage.models.fuse_qkv import attn_get_qkv_projections
+
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -282,14 +284,18 @@ class QwenDoubleStreamAttnProcessor2_0:
         seq_txt = encoder_hidden_states.shape[1]
 
         # Compute QKV for image stream (sample projections)
-        img_query = attn.to_q(hidden_states)
-        img_key = attn.to_k(hidden_states)
-        img_value = attn.to_v(hidden_states)
+        # img_query = attn.to_q(hidden_states)
+        # img_key = attn.to_k(hidden_states)
+        # img_value = attn.to_v(hidden_states)
 
         # Compute QKV for text stream (context projections)
-        txt_query = attn.add_q_proj(encoder_hidden_states)
-        txt_key = attn.add_k_proj(encoder_hidden_states)
-        txt_value = attn.add_v_proj(encoder_hidden_states)
+        # txt_query = attn.add_q_proj(encoder_hidden_states)
+        # txt_key = attn.add_k_proj(encoder_hidden_states)
+        # txt_value = attn.add_v_proj(encoder_hidden_states)
+
+        img_query, img_key, img_value, txt_query, txt_key, txt_value = attn_get_qkv_projections(
+            attn, hidden_states, encoder_hidden_states
+        )
 
         # Reshape for multi-head attention
         img_query = img_query.unflatten(-1, (attn.heads, -1))

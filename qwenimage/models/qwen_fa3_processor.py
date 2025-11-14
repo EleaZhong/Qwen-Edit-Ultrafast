@@ -7,6 +7,8 @@ import torch
 from typing import Optional, Tuple
 from diffusers.models.transformers.transformer_qwenimage import apply_rotary_emb_qwen
 
+from qwenimage.models.fuse_qkv import attn_get_qkv_projections
+
 try:
     from kernels import get_kernel
     _k = get_kernel("kernels-community/vllm-flash-attn3")
@@ -39,29 +41,6 @@ def _(q, k, v, **kwargs):
     meta_q = torch.empty_like(q).contiguous()
     return meta_q #, q.new_empty((q.size(0), q.size(2), q.size(1)), dtype=torch.float32)
 
-
-def _get_projections(attn: Attention, hidden_states, encoder_hidden_states):
-    img_q = attn.to_q(hidden_states)
-    img_k = attn.to_k(hidden_states)
-    img_v = attn.to_v(hidden_states)
-
-    txt_q = attn.add_q_proj(encoder_hidden_states)
-    txt_k = attn.add_k_proj(encoder_hidden_states)
-    txt_v = attn.add_v_proj(encoder_hidden_states)
-
-    return img_q, img_k, img_v, txt_q, txt_k, txt_v
-
-
-def _get_fused_projections(attn: Attention, hidden_states, encoder_hidden_states):
-    img_q, img_k, img_v = attn.to_qkv(hidden_states).chunk(3, dim=-1)
-    txt_q, txt_k, txt_v = attn.to_added_qkv(encoder_hidden_states).chunk(3, dim=-1)
-    return img_q, img_k, img_v, txt_q, txt_k, txt_v
-
-
-def _get_qkv_projections(attn: Attention, hidden_states, encoder_hidden_states):
-    if attn.fused_projections:
-        return _get_fused_projections(attn, hidden_states, encoder_hidden_states)
-    return _get_projections(attn, hidden_states, encoder_hidden_states)
 
 
 class QwenDoubleStreamAttnProcessorFA3:
@@ -99,7 +78,7 @@ class QwenDoubleStreamAttnProcessorFA3:
 
         _ensure_fa3_available()
 
-        img_q, img_k, img_v, txt_q, txt_k, txt_v = _get_qkv_projections(
+        img_q, img_k, img_v, txt_q, txt_k, txt_v = attn_get_qkv_projections(
             attn, hidden_states, encoder_hidden_states
         )
         
