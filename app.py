@@ -3,6 +3,7 @@ import math
 import random
 import os
 import tempfile
+import sys
 
 import numpy as np
 from spaces.zero.torch.aoti import ZeroGPUCompiledModel, ZeroGPUWeights
@@ -24,6 +25,8 @@ from qwenimage.prompt import build_camera_prompt
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
 from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
+
+sys.setrecursionlimit(10_000)
 
 # --- Model Loading ---
 dtype = torch.bfloat16
