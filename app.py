@@ -34,7 +34,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 print(f"main cuda: {torch.cuda.is_available()=}")
 
-exp = ExperimentRegistry.get("qwen_lightning_fa3_aot_int8_fuse_2step_fbcache_055_downsize512")()
+exp = ExperimentRegistry.get("qwen_lightning_fa3_aot_int8_fuse_1step_fbcache_055_downsize512")()
 exp.load()
 
 
