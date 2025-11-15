@@ -97,7 +97,7 @@ def infer_camera_edit(
         generator=generator,
         true_cfg_scale=true_guidance_scale,
         num_images_per_prompt=1,
-    ).images[0]
+    )
 
     return result, seed, prompt
 
