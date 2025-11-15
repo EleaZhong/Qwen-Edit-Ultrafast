@@ -73,7 +73,7 @@ class ExperimentRegistry:
 
 
 class PipeInputs:
-    images = Path("scripts/assets/test_images_v1/").iterdir()
+    images = list(Path("scripts/assets/test_images_v1/").glob("*.jpg"))
 
     camera_params = {
         "rotate_deg": [-90,-45,0,45,90],
@@ -807,6 +807,36 @@ class Qwen_Lightning_FA3_AoT_int8_fuse_2step_FBCache055_Downsize512(Qwen_Lightni
         kwargs["num_inference_steps"] = 2
         return self.pipe(*args, **kwargs).images[0]
 
+@ExperimentRegistry.register(name="qwen_lightning_fa3_aot_int8_fuse_downsize512")
+class Qwen_Lightning_FA3_AoT_int8_fuse_Downsize512(Qwen_Lightning_Lora):
+    size = 512
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        self.pipe.transformer.fuse_qkv_projections()
+        optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=True,
+            suffix="_fa3_fuse",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+    def run_once(self, *args, **kwargs):
+        image = kwargs["image"][0]
+        w,h = image.size
+        real_w, real_h = calculate_dimensions(1024 * 1024, w / h)
+        down_w, down_h = calculate_dimensions(self.size * self.size, w / h)
+        image = image.resize((down_w, down_h))
+        kwargs["image"] = [image]
+        kwargs["vae_image_override"] = self.size * self.size
+        kwargs["width"] = real_w
+        kwargs["height"] = real_h
+        return self.pipe(*args, **kwargs).images[0]
+
 @ExperimentRegistry.register(name="qwen_lightning_fa3_aot_int8_fuse_1step_fbcache_055_downsize512")
 class Qwen_Lightning_FA3_AoT_int8_fuse_1step_FBCache055_Downsize512(Qwen_Lightning_Lora):
     size = 512
@@ -814,7 +844,7 @@ class Qwen_Lightning_FA3_AoT_int8_fuse_1step_FBCache055_Downsize512(Qwen_Lightni
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
-        # apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.55,)
+        apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.55,)
         optimize_pipeline_(
             self.pipe,
             cache_compiled=self.config.cache_compiled,
