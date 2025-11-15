@@ -49,8 +49,7 @@ optim_pipe()
 MAX_SEED = np.iinfo(np.int32).max
 
 
-@spaces.GPU(duration=4)
-# @ftimed
+@spaces.GPU
 def infer_camera_edit(
     image,
     rotate_deg,
