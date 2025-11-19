@@ -6,27 +6,14 @@ import tempfile
 import sys
 
 import numpy as np
-from spaces.zero.torch.aoti import ZeroGPUCompiledModel, ZeroGPUWeights
 import torch
 from PIL import Image
 import gradio as gr
-from gradio_client import Client, handle_file
 import spaces
-from diffusers import FlowMatchEulerDiscreteScheduler
-from huggingface_hub import hf_hub_download
-from safetensors.torch import load_file
-from torchao.quantization import quantize_
-from torchao.quantization import Int8WeightOnlyConfig
 
 from qwenimage.debug import ctimed, ftimed
-from qwenimage.experiments.experiments_qwen import Qwen_FA3_AoT_fp8, Qwen_FA3_AoT_int8, QwenBaseExperiment, ExperimentRegistry
-from qwenimage.optimization import optimize_pipeline_
+from qwenimage.experiments.experiments_qwen import ExperimentRegistry
 from qwenimage.prompt import build_camera_prompt
-from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
-from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
-from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
-
-sys.setrecursionlimit(10_000)
 
 # --- Model Loading ---
 dtype = torch.bfloat16
