@@ -80,7 +80,7 @@ def optimize_pipeline_(
         pipe_kwargs={}
     ):
 
-    if quantize and quantize_config is not None:
+    if quantize_config is not None:
         transformer_pt2_cache_path = f"checkpoints/transformer{suffix}_archive.pt2"
         transformer_weights_cache_path = f"checkpoints/transformer{suffix}_weights.pt"
         print(f"original model size: {get_model_size_in_bytes(pipeline.transformer) / 1024 / 1024} MB")

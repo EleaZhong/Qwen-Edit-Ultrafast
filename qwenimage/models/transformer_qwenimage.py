@@ -34,6 +34,7 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
 
+from qwenimage.activation_record import ActivationReport
 from qwenimage.models.attention_processors import QwenDoubleStreamAttnProcessor2_0
 
 
@@ -445,6 +446,30 @@ class QwenImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
 
         self.gradient_checkpointing = False
 
+        self.activation_report = None
+        self.recording_activation = False
+    
+    def start_recording_activations(self):
+        self.activation_report = ActivationReport()
+        self.recording_activation = True
+
+    def end_recording_activations(self):
+        print(self.activation_report)
+        summary = self.activation_report.summary()
+        self.activation_report = None
+        self.recording_activation = False
+        return summary
+    
+    def arec(self, name: str, a: torch.Tensor):
+        if not self.recording_activation:
+            return
+        tmean = torch.mean(torch.abs(a)).item()
+        tmax = torch.max(torch.abs(a)).item()
+        print(f"debug: {name}, {tmean}, {tmax}")
+        self.activation_report.record(name, tmean, tmax)
+        
+        
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -531,6 +556,8 @@ class QwenImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
                     image_rotary_emb=image_rotary_emb,
                     joint_attention_kwargs=attention_kwargs,
                 )
+                self.arec(f"encoder_hidden_states.{index_block}", encoder_hidden_states)
+                self.arec(f"hidden_states.{index_block}", hidden_states)
 
         # Use only the image part (hidden_states) from the dual-stream blocks
         hidden_states = self.norm_out(hidden_states, temb)

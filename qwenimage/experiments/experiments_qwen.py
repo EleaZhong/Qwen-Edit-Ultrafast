@@ -13,7 +13,7 @@ from PIL import Image
 import pandas as pd
 from spaces.zero.torch.aoti import ZeroGPUCompiledModel, ZeroGPUWeights
 from torchao import autoquant
-from torchao.quantization import Float8DynamicActivationFloat8WeightConfig, Float8WeightOnlyConfig, Int4WeightOnlyConfig, Int8DynamicActivationInt4WeightConfig, Int8DynamicActivationInt8WeightConfig, quantize_
+from torchao.quantization import Float8DynamicActivationFloat8WeightConfig, Float8WeightOnlyConfig, Int4WeightOnlyConfig, Int8DynamicActivationInt4WeightConfig, Int8DynamicActivationInt8WeightConfig, PerRow, quantize_
 from torchao.quantization import Int8WeightOnlyConfig
 import spaces
 import torch
@@ -492,6 +492,43 @@ class Qwen_Sage_AoT_int8da(QwenBaseExperiment):
             }
         )
 
+
+@ExperimentRegistry.register(name="qwen_sagefp8cuda_aot_int8da")
+class Qwen_Sagefp8cuda_AoT_int8da(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2(sageattn_qk_int8_pv_fp8_cuda_wrapper))
+        optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=True,
+            quantize_config=Int8DynamicActivationInt8WeightConfig(),
+            suffix="_int8da_sage",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+
+@ExperimentRegistry.register(name="qwen_sagefp8cuda_aot_int8wo")
+class Qwen_Sagefp8cuda_AoT_int8wo(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2(sageattn_qk_int8_pv_fp8_cuda_wrapper))
+        optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=True,
+            quantize_config=Int8WeightOnlyConfig(),
+            suffix="_int8wo_sage",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+
 @ExperimentRegistry.register(name="qwen_fp8_weightonly")
 class Qwen_fp8_Weightonly(QwenBaseExperiment):
     @ftimed
@@ -593,6 +630,8 @@ class Qwen_Sage_AoT_fp8(QwenBaseExperiment):
                 "num_inference_steps":4
             }
         )
+
+
 
 # FA3_AoT_fp8_fuse
 @ExperimentRegistry.register(name="qwen_fa3_aot_fp8_fuse")

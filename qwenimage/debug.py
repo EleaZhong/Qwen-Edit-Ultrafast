@@ -19,9 +19,11 @@ DEBUG = True
 
 class ProfileReport:
     def __init__(self):
-        self.recorded_times = defaultdict(list)
+        self.clear()
     
     def record(self,name,time):
+        if not self.active:
+            return
         self.recorded_times[name].append(time)
     
     def __getitem__(self, name):
@@ -38,6 +40,7 @@ class ProfileReport:
     
     def clear(self):
         self.recorded_times = defaultdict(list)
+        self.active = True
 
 profile_report = ProfileReport()
 
@@ -60,6 +63,14 @@ class ProfileSession:
         global profile_report
         print(profile_report)
         profile_report.clear()
+    
+    def pause(self):
+        global profile_report
+        profile_report.active = False
+    
+    def unpause(self):
+        global profile_report
+        profile_report.active = True
 
 
 def ftimed(func=None):
@@ -238,3 +249,4 @@ def texam(t: torch.Tensor):
         mean_val = "N/A"
     print(f"Min: {t.min().item()}, Max: {t.max().item()}, Mean: {mean_val}")
     print(f"Device: {t.device}, Dtype: {t.dtype}, Requires Grad: {t.requires_grad}")
+

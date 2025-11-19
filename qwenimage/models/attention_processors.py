@@ -206,7 +206,7 @@ class QwenDoubleStreamAttnProcessorFA3:
         out = flash_attn_func(q, k, v, causal=False)  # out: (B, S_total, H, D_h)
 
         # ---- Back to (B, S, D_model) ----
-        out = out.flatten(2, 3).to(q.dtype)
+        out = out.flatten(2, 3)#.to(q.dtype)
 
         # Split back to text / image segments
         txt_attn_out = out[:, :S_txt, :]
@@ -300,7 +300,7 @@ class QwenDoubleStreamAttnProcessor2_0:
 
         # Reshape back
         joint_hidden_states = joint_hidden_states.flatten(2, 3)
-        joint_hidden_states = joint_hidden_states.to(joint_query.dtype)
+        # joint_hidden_states = joint_hidden_states.to(joint_query.dtype)
 
         # Split attention outputs back
         txt_attn_output = joint_hidden_states[:, :seq_txt, :]  # Text part
@@ -390,7 +390,7 @@ class QwenDoubleStreamAttnProcessorSageAttn2:
         out = out.transpose(1, 2) # to (B, S, H, D_h)
 
         # ---- Back to (B, S, D_model) ----
-        out = out.flatten(2, 3).to(q.dtype)
+        out = out.flatten(2, 3)#.to(q.dtype)
 
         # Split back to text / image segments
         txt_attn_out = out[:, :S_txt, :]
