@@ -5,6 +5,8 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 from diffusers.models.transformers.transformer_qwenimage import apply_rotary_emb_qwen
 
+from sageattention import sageattn, sageattn_qk_int8_pv_fp16_cuda, sageattn_qk_int8_pv_fp16_triton, sageattn_qk_int8_pv_fp8_cuda, sageattn_qk_int8_pv_fp8_cuda_sm90
+
 try:
     from kernels import get_kernel
     _k = get_kernel("kernels-community/vllm-flash-attn3")
@@ -52,12 +54,74 @@ def flash_attn_func(
     return outputs
 
 @flash_attn_func.register_fake
-def _(q, k, v, **kwargs):
+def _fa(q, k, v, **kwargs):
     # two outputs:
     # 1. output: (batch, seq_len, num_heads, head_dim)
     # 2. softmax_lse: (batch, num_heads, seq_len) with dtype=torch.float32
     meta_q = torch.empty_like(q).contiguous()
     return meta_q #, q.new_empty((q.size(0), q.size(2), q.size(1)), dtype=torch.float32)
+
+
+@torch.library.custom_op("sage::sageattn", mutates_args=())
+def sageattn_wrapper(
+    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+) -> torch.Tensor:
+    outputs = sageattn(q, k, v)
+    return outputs
+
+@sageattn_wrapper.register_fake
+def _sageattn_wrapper_fake(q, k, v):
+    meta_q = torch.empty_like(q).contiguous()
+    return meta_q
+
+@torch.library.custom_op("sage::sageattn_qk_int8_pv_fp16_cuda", mutates_args=())
+def sageattn_qk_int8_pv_fp16_cuda_wrapper(
+    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+) -> torch.Tensor:
+    outputs = sageattn_qk_int8_pv_fp16_cuda(q, k, v)
+    return outputs
+
+@sageattn_qk_int8_pv_fp16_cuda_wrapper.register_fake
+def _sageattn_qk_int8_pv_fp16_cuda_wrapper_fake(q, k, v):
+    meta_q = torch.empty_like(q).contiguous()
+    return meta_q
+
+
+@torch.library.custom_op("sage::sageattn_qk_int8_pv_fp16_triton", mutates_args=())
+def sageattn_qk_int8_pv_fp16_triton_wrapper(
+    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+) -> torch.Tensor:
+    outputs = sageattn_qk_int8_pv_fp16_triton(q, k, v)
+    return outputs
+
+@sageattn_qk_int8_pv_fp16_triton_wrapper.register_fake
+def _sageattn_qk_int8_pv_fp16_triton_wrapper_fake(q, k, v):
+    meta_q = torch.empty_like(q).contiguous()
+    return meta_q
+
+@torch.library.custom_op("sage::sageattn_qk_int8_pv_fp8_cuda", mutates_args=())
+def sageattn_qk_int8_pv_fp8_cuda_wrapper(
+    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+) -> torch.Tensor:
+    outputs = sageattn_qk_int8_pv_fp8_cuda(q, k, v)
+    return outputs
+
+@sageattn_qk_int8_pv_fp8_cuda_wrapper.register_fake
+def _sageattn_qk_int8_pv_fp8_cuda_wrapper_fake(q, k, v):
+    meta_q = torch.empty_like(q).contiguous()
+    return meta_q
+
+@torch.library.custom_op("sage::sageattn_qk_int8_pv_fp8_cuda_sm90", mutates_args=())
+def sageattn_qk_int8_pv_fp8_cuda_sm90_wrapper(
+    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+) -> torch.Tensor:
+    outputs = sageattn_qk_int8_pv_fp8_cuda_sm90(q, k, v)
+    return outputs
+
+@sageattn_qk_int8_pv_fp8_cuda_sm90_wrapper.register_fake
+def _sageattn_qk_int8_pv_fp8_cuda_sm90_wrapper_fake(q, k, v):
+    meta_q = torch.empty_like(q).contiguous()
+    return meta_q
 
 
 
@@ -164,7 +228,7 @@ class QwenDoubleStreamAttnProcessor2_0:
     implements joint attention computation where text and image streams are processed together.
     """
 
-    _attention_backend = None
+    _attention_backend = None #"_native_flash"
 
     def __init__(self):
         if not hasattr(F, "scaled_dot_product_attention"):
@@ -253,22 +317,9 @@ class QwenDoubleStreamAttnProcessor2_0:
 
 
 
-class QwenDoubleStreamAttnProcessorFA3:
-    """
-    FA3-based attention processor for Qwen double-stream architecture.
-    Computes joint attention over concatenated [text, image] streams using vLLM FlashAttention-3
-    accessed via Hugging Face `kernels`.
-
-    Notes / limitations:
-    - General attention masks are not supported here (FA3 path). `is_causal=False` and no arbitrary mask.
-    - Optional windowed attention / sink tokens / softcap can be plumbed through if you use those features.
-    - Expects an available `apply_rotary_emb_qwen` in scope (same as your non-FA3 processor).
-    """
-
-    _attention_backend = "fa3"  # for parity with your other processors, not used internally
-
-    def __init__(self):
-        _ensure_fa3_available()
+class QwenDoubleStreamAttnProcessorSageAttn2:
+    def __init__(self, sageattn_func):
+        self.sageattn_func = sageattn_func
 
     @torch.no_grad()
     def __call__(
@@ -329,9 +380,14 @@ class QwenDoubleStreamAttnProcessorFA3:
         q = torch.cat([txt_q, img_q], dim=1)
         k = torch.cat([txt_k, img_k], dim=1)
         v = torch.cat([txt_v, img_v], dim=1)
+        
 
-        # FlashAttention-3 path expects (B, S, H, D_h) and returns (out, softmax_lse)
-        out = flash_attn_func(q, k, v, causal=False)  # out: (B, S_total, H, D_h)
+        # sage attention
+        q = q.transpose(1, 2) # (B, H, S, D_h)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        out = self.sageattn_func(q, k, v)  # out: (B, H, S, D_h)
+        out = out.transpose(1, 2) # to (B, S, H, D_h)
 
         # ---- Back to (B, S, D_model) ----
         out = out.flatten(2, 3).to(q.dtype)

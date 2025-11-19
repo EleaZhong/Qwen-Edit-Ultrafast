@@ -2,6 +2,7 @@ import math
 from pathlib import Path
 from collections import defaultdict
 import statistics
+from typing import Literal
 
 from pydantic import BaseModel
 import pandas as pd
@@ -12,35 +13,6 @@ import lpips
 import torch
 import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as TF
-
-from qwenimage.experiment import ExperimentConfig
-from qwenimage.experiments.experiments_qwen import ExperimentRegistry
-
-
-class ExperimentSet(BaseModel):
-    original: str
-    comparisons: list[str]
-
-    @classmethod
-    def create(cls, *names):
-        if len(names)<2:
-            raise ValueError(f"{len(names)=}")
-        orig = names[0]
-        comp = names[1:]
-        return cls(original=orig, comparisons=comp)
-
-class SetData:
-    def __init__(self, name: str):
-        self.name=name
-        report_dir = ExperimentConfig().report_dir
-        output_dir = report_dir / f"{name}_outputs"
-        self.image_paths = sorted(list(output_dir.glob("*.jpg")))
-    
-    def __len__(self):
-        return len(self.image_paths)
-
-    def __getitem__(self, ind):
-        return Image.open(self.image_paths[ind])
 
 
 _transforms = T.Compose([
@@ -66,3 +38,21 @@ def compare_lpips(loss_fn, image1, image2, resize=False, device="cuda", to_item=
     if to_item:
         return score.float().item()
     return score
+
+class LpipsCalculator:
+    def __init__(self, resize=False, device="cuda", to_item=True):
+        self.resize = resize
+        self.to_item = to_item
+        self.loss_fn = lpips.LPIPS(net='alex')
+        if torch.cuda.is_available():
+            self.device = "cuda"
+        else:
+            self.device = "cpu"
+        self.loss_fn = self.loss_fn.to(device=self.device)
+    
+    def __call__(self, image1, image2, resize=None, to_item=None):
+        if resize is None:
+            resize = self.resize
+        if to_item is None:
+            to_item = self.to_item
+        return compare_lpips(self.loss_fn, image1, image2, resize=resize, device=self.device, to_item=to_item)

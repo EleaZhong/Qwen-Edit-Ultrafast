@@ -21,7 +21,7 @@ from torch.utils._pytree import tree_map
 from torchao.utils import get_model_size_in_bytes
 
 from qwenimage.debug import ctimed, ftimed, print_first_param
-from qwenimage.models.attention_processors import QwenDoubleStreamAttnProcessorFA3
+from qwenimage.models.attention_processors import QwenDoubleStreamAttnProcessorFA3, QwenDoubleStreamAttnProcessorSageAttn2, sageattn_qk_int8_pv_fp16_cuda_wrapper, sageattn_qk_int8_pv_fp16_triton_wrapper, sageattn_qk_int8_pv_fp8_cuda_sm90_wrapper, sageattn_qk_int8_pv_fp8_cuda_wrapper, sageattn_wrapper
 from qwenimage.models.first_block_cache import apply_cache_on_pipe
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline, calculate_dimensions
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
@@ -319,6 +319,7 @@ class Qwen_Fuse(QwenBaseExperiment):
     @ftimed
     def optimize(self):
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
 
 
 @ExperimentRegistry.register(name="qwen_fuse_aot")
@@ -326,6 +327,8 @@ class Qwen_Fuse_AoT(QwenBaseExperiment):
     @ftimed
     def optimize(self):
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
+        
         optimize_pipeline_(
             self.pipe,
             cache_compiled=self.config.cache_compiled,
@@ -344,6 +347,7 @@ class Qwen_FA3_Fuse(QwenBaseExperiment):
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
 
 
 @ExperimentRegistry.register(name="qwen_fa3")
@@ -351,6 +355,39 @@ class Qwen_FA3(QwenBaseExperiment):
     @ftimed
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+
+
+@ExperimentRegistry.register(name="qwen_sageattn")
+class Qwen_Sageattn(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2(sageattn_wrapper))
+
+@ExperimentRegistry.register(name="qwen_sageattn_qk_int8_pv_fp16_cuda")
+class Qwen_Sageattn_qk_int8_pv_fp16_cuda(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2(sageattn_qk_int8_pv_fp16_cuda_wrapper))
+
+@ExperimentRegistry.register(name="qwen_sageattn_qk_int8_pv_fp16_triton")
+class Qwen_Sageattn_qk_int8_pv_fp16_triton(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2(sageattn_qk_int8_pv_fp16_triton_wrapper))
+
+@ExperimentRegistry.register(name="qwen_sageattn_qk_int8_pv_fp8_cuda")
+class Qwen_Sageattn_qk_int8_pv_fp8_cuda(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2(sageattn_qk_int8_pv_fp8_cuda_wrapper))
+
+@ExperimentRegistry.register(name="qwen_sageattn_qk_int8_pv_fp8_cuda_sm90")
+class Qwen_Sageattn_qk_int8_pv_fp8_cuda_sm90(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2(sageattn_qk_int8_pv_fp8_cuda_sm90_wrapper))
+
+
 
 @ExperimentRegistry.register(name="qwen_aot")
 class Qwen_AoT(QwenBaseExperiment):
@@ -385,6 +422,23 @@ class Qwen_FA3_AoT(QwenBaseExperiment):
             }
         )
 
+@ExperimentRegistry.register(name="qwen_sage_aot")
+class Qwen_Sage_AoT(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2())
+        optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=False,
+            suffix="_sage",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+
 
 @ExperimentRegistry.register(name="qwen_fa3_aot_int8")
 class Qwen_FA3_AoT_int8(QwenBaseExperiment):
@@ -403,13 +457,63 @@ class Qwen_FA3_AoT_int8(QwenBaseExperiment):
             }
         )
 
+@ExperimentRegistry.register(name="qwen_sage_aot_int8")
+class Qwen_Sage_AoT_int8(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2())
+        optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=True,
+            suffix="_sage",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+
+@ExperimentRegistry.register(name="qwen_sage_aot_int8da")
+class Qwen_Sage_AoT_int8da(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2(sageattn_qk_int8_pv_fp8_cuda_sm90_wrapper))
+        optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=True,
+            quantize_config=Int8DynamicActivationInt8WeightConfig(),
+            suffix="_int8da_sage",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+
+@ExperimentRegistry.register(name="qwen_fp8_weightonly")
+class Qwen_fp8_Weightonly(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        quantize_(self.pipe.transformer, Float8WeightOnlyConfig())
+
+
+@ExperimentRegistry.register(name="qwen_int8_weightonly")
+class Qwen_int8_Weightonly(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+        quantize_(self.pipe.transformer, Int8WeightOnlyConfig())
+
 
 @ExperimentRegistry.register(name="qwen_fp8")
 class Qwen_fp8(QwenBaseExperiment):
     @ftimed
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
-        quantize_(self.pipe.transformer, Float8WeightOnlyConfig())
+        quantize_(self.pipe.transformer, Float8DynamicActivationFloat8WeightConfig())
 
 
 @ExperimentRegistry.register(name="qwen_int8")
@@ -417,8 +521,7 @@ class Qwen_int8(QwenBaseExperiment):
     @ftimed
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
-        quantize_(self.pipe.transformer, Int8WeightOnlyConfig())
-
+        quantize_(self.pipe.transformer, Int8DynamicActivationInt8WeightConfig())
 
 
 
@@ -473,6 +576,24 @@ class Qwen_FA3_AoT_fp8(QwenBaseExperiment):
 
         aoti_apply(compiled_transformer, self.pipe.transformer)
 
+@ExperimentRegistry.register(name="qwen_sage_aot_fp8")
+class Qwen_Sage_AoT_fp8(QwenBaseExperiment):
+    @ftimed
+    def optimize(self):
+        self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorSageAttn2())
+        optimize_pipeline_(
+            self.pipe,
+            cache_compiled=self.config.cache_compiled,
+            quantize=True,
+            quantize_config=Float8DynamicActivationFloat8WeightConfig(),
+            suffix="_fp8_sage",
+            pipe_kwargs={
+                "image": [Image.new("RGB", (1024, 1024))],
+                "prompt":"prompt",
+                "num_inference_steps":4
+            }
+        )
+
 # FA3_AoT_fp8_fuse
 @ExperimentRegistry.register(name="qwen_fa3_aot_fp8_fuse")
 class Qwen_FA3_AoT_fp8_fuse(QwenBaseExperiment):
@@ -481,6 +602,7 @@ class Qwen_FA3_AoT_fp8_fuse(QwenBaseExperiment):
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
 
         pipe_kwargs={
             "image": [Image.new("RGB", (1024, 1024))],
@@ -536,6 +658,7 @@ class Qwen_FA3_AoT_int8_fuse(QwenBaseExperiment):
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
         optimize_pipeline_(
             self.pipe,
             cache_compiled=self.config.cache_compiled,
@@ -557,6 +680,7 @@ class Qwen_lightning_FA3_AoT_fp8_fuse(Qwen_Lightning_Lora):
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
 
         pipe_kwargs={
             "image": [Image.new("RGB", (1024, 1024))],
@@ -612,6 +736,7 @@ class Qwen_Lightning_FA3_AoT_int8_fuse(Qwen_Lightning_Lora):
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
         optimize_pipeline_(
             self.pipe,
             cache_compiled=self.config.cache_compiled,
@@ -708,6 +833,7 @@ class Qwen_lightning_FA3_AoT_autoquant_fuse(Qwen_Lightning_Lora):
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
 
         pipe_kwargs={
             "image": [Image.new("RGB", (1024, 1024))],
@@ -782,6 +908,7 @@ class Qwen_Lightning_FA3_AoT_int8_fuse_2step_FBCache055_Downsize512(Qwen_Lightni
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
         apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.55,)
         optimize_pipeline_(
             self.pipe,
@@ -814,6 +941,7 @@ class Qwen_Lightning_FA3_AoT_int8_fuse_Downsize512(Qwen_Lightning_Lora):
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
         optimize_pipeline_(
             self.pipe,
             cache_compiled=self.config.cache_compiled,
@@ -844,6 +972,7 @@ class Qwen_Lightning_FA3_AoT_int8_fuse_1step_FBCache055_Downsize512(Qwen_Lightni
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
         apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.55,)
         optimize_pipeline_(
             self.pipe,
@@ -876,6 +1005,7 @@ class Qwen_Lightning_FA3_AoT_int8_fuse_4step_FBCache055_Downsize512(Qwen_Lightni
     def optimize(self):
         self.pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
         self.pipe.transformer.fuse_qkv_projections()
+        self.pipe.transformer.check_fused_qkv()
         apply_cache_on_pipe(self.pipe, residual_diff_threshold=0.55,)
         optimize_pipeline_(
             self.pipe,

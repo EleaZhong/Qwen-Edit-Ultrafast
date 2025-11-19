@@ -549,8 +549,16 @@ class QwenImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         """
         Override AttenionMixin
         """
+        print("override")
         super().fuse_qkv_projections()
 
         for module in self.modules():
             if isinstance(module, Attention):
                 module.fuse_projections()
+    
+    def check_fused_qkv(self):
+        fused = all([b.attn.fused_projections for b in self.transformer_blocks])
+        if fused:
+            print(f"All attention fused!")
+        else:
+            print({i:b.attn.fused_projections for i,b in enumerate(self.transformer_blocks)})

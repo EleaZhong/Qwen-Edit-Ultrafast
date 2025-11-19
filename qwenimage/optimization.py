@@ -6,6 +6,7 @@ from typing import Any
 from typing import Callable
 from typing import ParamSpec
 from spaces.zero.torch.aoti import ZeroGPUCompiledModel, ZeroGPUWeights
+from torchao.core.config import AOBaseConfig
 from torchao.quantization import quantize_
 from torchao.quantization import Int8WeightOnlyConfig
 import spaces
@@ -73,12 +74,20 @@ def optimize_pipeline_(
         pipeline: Callable[P, Any],
         cache_compiled=True,
         quantize=True,
+        quantize_config:AOBaseConfig=None,
         inductor_config=None,
         suffix="",
         pipe_kwargs={}
     ):
 
-    if quantize:
+    if quantize and quantize_config is not None:
+        transformer_pt2_cache_path = f"checkpoints/transformer{suffix}_archive.pt2"
+        transformer_weights_cache_path = f"checkpoints/transformer{suffix}_weights.pt"
+        print(f"original model size: {get_model_size_in_bytes(pipeline.transformer) / 1024 / 1024} MB")
+        quantize_(pipeline.transformer, quantize_config)
+        print_first_param(pipeline.transformer)
+        print(f"quantized model size: {get_model_size_in_bytes(pipeline.transformer) / 1024 / 1024} MB")
+    elif quantize:
         transformer_pt2_cache_path = f"checkpoints/transformer_int8{suffix}_archive.pt2"
         transformer_weights_cache_path = f"checkpoints/transformer_int8{suffix}_weights.pt"
         print(f"original model size: {get_model_size_in_bytes(pipeline.transformer) / 1024 / 1024} MB")
