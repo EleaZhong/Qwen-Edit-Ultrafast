@@ -21,10 +21,10 @@ from torch.utils._pytree import tree_map
 from torchao.utils import get_model_size_in_bytes
 
 from qwenimage.debug import ctimed, ftimed, print_first_param
+from qwenimage.models.attention_processors import QwenDoubleStreamAttnProcessorFA3
 from qwenimage.models.first_block_cache import apply_cache_on_pipe
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline, calculate_dimensions
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
-from qwenimage.models.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 from qwenimage.experiment import AbstractExperiment, ExperimentConfig
 from qwenimage.debug import ProfileSession, ftimed
 from qwenimage.optimization import INDUCTOR_CONFIGS, TRANSFORMER_DYNAMIC_SHAPES, aoti_apply, drain_module_parameters, optimize_pipeline_
