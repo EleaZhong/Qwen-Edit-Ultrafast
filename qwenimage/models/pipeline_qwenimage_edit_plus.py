@@ -763,6 +763,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             # 5. Prepare timesteps
             sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps) if sigmas is None else sigmas
             image_seq_len = latents.shape[1]
+            print(f"{image_seq_len=}")
             mu = calculate_shift(
                 image_seq_len,
                 self.scheduler.config.get("base_image_seq_len", 256),
@@ -770,6 +771,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                 self.scheduler.config.get("base_shift", 0.5),
                 self.scheduler.config.get("max_shift", 1.15),
             )
+            print(f"{mu=}")
             timesteps, num_inference_steps = retrieve_timesteps(
                 self.scheduler,
                 num_inference_steps,
@@ -777,6 +779,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                 sigmas=sigmas,
                 mu=mu,
             )
+            print(f"{timesteps=}")
             num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
             self._num_timesteps = len(timesteps)
 

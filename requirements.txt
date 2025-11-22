@@ -10,7 +10,7 @@ dashscope
 kernels
 torchvision
 peft
-torchao==0.11.0
+torchao==0.14.1 
 pydantic
 pandas
 modal
