@@ -15,6 +15,7 @@ num_workers: 4
 resume_from_checkpoint: null
 log_model_steps: 100
 preprocessing_epoch_len: 64
+preprocessing_epoch_repetitions: 1
 
 
 # Logging

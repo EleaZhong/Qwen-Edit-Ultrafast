@@ -8,14 +8,14 @@ from diffusers.pipelines.qwenimage.pipeline_qwenimage import QwenImagePipeline
 import torch
 from safetensors.torch import load_file, save_model
 import torch.nn.functional as F
+import torchvision.transforms.v2.functional as TF
 from einops import rearrange
 
 from qwenimage.datamodels import QwenConfig, QwenInputs
 from qwenimage.debug import ctimed, ftimed, print_gpu_memory, texam
 from qwenimage.experiments.quantize_text_encoder_experiments import quantize_text_encoder_int4wo_linear
 from qwenimage.experiments.quantize_experiments import quantize_transformer_fp8darow_nolast
-from qwenimage.models.encode_prompt import encode_prompt
-from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
+from qwenimage.models.pipeline_qwenimage_edit_plus import CONDITION_IMAGE_SIZE, QwenImageEditPlusPipeline, calculate_dimensions
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
 from qwenimage.optimization import simple_quantize_model
 from qwenimage.sampling import TimestepDistUtils
@@ -90,7 +90,6 @@ class QwenImageFoundation(WandModel):
             static_mu=self.config.static_mu,
             loss_weight_dist=self.config.loss_weight_dist,
         )
-        self.static_prompt_embeds = None
 
         if self.config.quantize_text_encoder:
             quantize_text_encoder_int4wo_linear(self.text_encoder)
@@ -131,8 +130,14 @@ class QwenImageFoundation(WandModel):
     
     def pil_to_latents(self, images):
         image = self.pipe.image_processor.preprocess(images)
-        print("pil_to_latents, image")
+
+        h,w = image.shape[-2:]
+        h_r, w_r = calculate_dimensions(self.config.vae_image_size, h/w)
+        image = TF.resize(image, (h_r, w_r))
+
+        print("pil_to_latents.image")
         texam(image)
+
         image = image.unsqueeze(2) # N, C, F=1, H, W
         image = image.to(device=self.device, dtype=self.dtype)
         latents = self.pipe.vae.encode(image).latent_dist.mode() # argmax
@@ -149,7 +154,7 @@ class QwenImageFoundation(WandModel):
         )
         latents = (latents - latents_mean) / latents_std
         latents = latents.squeeze(2)
-        print("pil_to_latents, latents")
+        print("pil_to_latents.latents")
         texam(latents)
         return latents.to(dtype=self.dtype)
 
@@ -185,29 +190,19 @@ class QwenImageFoundation(WandModel):
         latents = rearrange(packed, "b (h w) (c ph pw) -> b c (h ph) (w pw)", ph=2, pw=2, h=h, w=w)
         return latents
 
-    def set_static_prompt(self, prompt:str):
-        self.text_encoder.to(device=self.device)
-        if self.text_encoder_device != "cuda":
-            self.text_encoder_device = "cuda"
-        with torch.no_grad():
-            prompt_embeds, prompt_embeds_mask = encode_prompt(
-                self.text_encoder,
-                self.pipe.tokenizer,
-                prompt,
-                device=self.device,
-                dtype=self.dtype,
-                max_sequence_length = self.config.train_max_sequence_length,
-            )
-        prompt_embeds = prompt_embeds.cpu().clone().detach()
-        prompt_embeds_mask = prompt_embeds_mask.cpu().clone().detach()
-        self.static_prompt_embeds = (prompt_embeds, prompt_embeds_mask)
 
     @ftimed
     def preprocess_batch(self, batch):
         prompts = batch["text"]
+        references = batch["reference"]
 
-        if self.static_prompt_embeds is not None:
-            prompt_embeds, prompt_embeds_mask = self.static_prompt_embeds
+        h,w = references.shape[-2:]
+        h_r, w_r = calculate_dimensions(CONDITION_IMAGE_SIZE, h/w)
+        references = TF.resize(references, (h_r, w_r))
+
+        print("preprocess_batch.references")
+        texam(references)
+        
 
         with ctimed("text_encoder.cuda()"):
             self.text_encoder.to(device=self.device)
@@ -215,26 +210,19 @@ class QwenImageFoundation(WandModel):
                 self.text_encoder_device = "cuda"
 
         with torch.no_grad():
-            prompt_embeds, prompt_embeds_mask = encode_prompt(
-                self.text_encoder,
-                self.pipe.tokenizer,
+            prompt_embeds, prompt_embeds_mask = self.pipe.encode_prompt(
                 prompts,
-                device=self.device,
-                dtype=self.dtype,
+                references.mul(255), # scaled to RGB
+                device="cuda",
                 max_sequence_length = self.config.train_max_sequence_length,
             )
-            # prompt_embeds, prompt_embeds_mask = foundation.pipe.encode_prompt(
-            #         inps[i]["prompt"],
-            #         _transforms(inps[i]["image"][0]).mul(255),
-            #         device="cuda",
-            #         # dtype=foundation.dtype,
-            #         max_sequence_length = foundation.config.train_max_sequence_length,
-            #     )
         prompt_embeds = prompt_embeds.cpu().clone().detach()
         prompt_embeds_mask = prompt_embeds_mask.cpu().clone().detach()
 
 
         batch["prompt_embeds"] = (prompt_embeds, prompt_embeds_mask)
+        batch["reference"] = batch["reference"].cpu()
+        batch["image"] = batch["image"].cpu()
 
         return batch
 
@@ -253,31 +241,50 @@ class QwenImageFoundation(WandModel):
         prompt_embeds = prompt_embeds.to(device=self.device)
         prompt_embeds_mask = prompt_embeds_mask.to(device=self.device)
 
-        images = batch["image"]
+        images = batch["image"].to(device=self.device, dtype=self.dtype)
         x_0 = self.pil_to_latents(images).to(device=self.device, dtype=self.dtype)
         x_1 = torch.randn_like(x_0).to(device=self.device, dtype=self.dtype)
         seq_len = self.timestep_dist_utils.get_seq_len(x_0)
         batch_size = x_0.shape[0]
         t = self.timestep_dist_utils.get_train_t([batch_size], seq_len=seq_len).to(device=self.device, dtype=self.dtype)
         x_t = (1.0 - t) * x_0 + t * x_1
-
         x_t_1d = self.pack_latents(x_t)
 
+        references = batch["reference"].to(device=self.device, dtype=self.dtype)
+        print("references")
+        texam(references)
+        assert references.shape[0] == 1
+        refs = self.pil_to_latents(references).to(device=self.device, dtype=self.dtype)
+        refs_1d = self.pack_latents(refs)
+        print("refs refs_1d")
+        texam(refs)
+        texam(refs_1d)
+
+        inp_1d = torch.cat([x_t_1d, refs_1d], dim=1)
+        print("inp_1d")
+        texam(inp_1d)
+
         l_height, l_width = x_0.shape[-2:]
+        ref_height, ref_width = refs.shape[-2:]
         img_shapes = [
-            [(1, l_height // 2, l_width // 2), ]
+            [
+                (1, l_height // 2, l_width // 2),
+                (1, ref_height // 2, ref_width // 2),
+            ]
         ] * batch_size
         txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
         image_rotary_emb = self.transformer.pos_embed(img_shapes, txt_seq_lens, device=x_0.device)
 
         v_pred_1d = self.transformer(
-            hidden_states=x_t_1d,
+            hidden_states=inp_1d,
             encoder_hidden_states=prompt_embeds,
             encoder_hidden_states_mask=prompt_embeds_mask,
             timestep=t,
             image_rotary_emb=image_rotary_emb,
             return_dict=False,
         )[0]
+
+        v_pred_1d = v_pred_1d[:, : x_t_1d.size(1)]
 
         v_pred_2d = self.unpack_latents(v_pred_1d, h=l_height//2, w=l_width//2)
         v_gt_2d = x_1 - x_0
@@ -298,6 +305,11 @@ class QwenImageFoundation(WandModel):
             self.text_encoder.to(device=self.device)
             if self.text_encoder_device != "cuda":
                 self.text_encoder_device = "cuda"
+        image = inputs.image[0]
+        w,h = image.size
+        h_r, w_r = calculate_dimensions(self.config.vae_image_size, h/w)
+        image = TF.resize(image, (h_r, w_r))
+        inputs.image = [image]
         return self.pipe(**inputs.model_dump()).images
     
 

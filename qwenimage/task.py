@@ -11,7 +11,7 @@ image_transforms = T.Compose([
     RemoveAlphaTransform(bg_color_rgb=(34, 34, 34)),
     T.ToImage(),
     T.RGB(),
-    RandomDownsize(sizes=(384, 512, 768)),
+    # RandomDownsize(sizes=(384, 512, 768)),
     T.ToDtype(torch.float, scale=True),
 ])
 

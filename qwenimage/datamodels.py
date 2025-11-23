@@ -43,7 +43,19 @@ class QwenConfig(ExperimentTrainerParameters):
     static_mu: float | None = None
     loss_weight_dist: str | None = None # "scaled_clipped_gaussian", "logit-normal"
 
-    vae_image_size: int = 1024 * 1024
+    vae_image_size: int = 512 * 512
     offload_text_encoder: bool = True
     quantize_text_encoder: bool = False
     quantize_transformer: bool = False
+
+    source_type: str = "im2im"
+    style_title: str|None = None
+    base_dir: str|None = None
+    csv_path: str|None = None
+    data_dir: str|None = None
+    ref_dir: str|None = None
+    prompt: str|None = None
+    train_range: tuple[int|float,int|float]|None=None
+    test_range: tuple[int|float,int|float]|None=None
+    val_with: str = "train"
+

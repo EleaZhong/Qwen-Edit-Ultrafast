@@ -1,0 +1,9 @@
+wandb_run_name: "lora-naive"
+output_dir: "/data/checkpoints/lora-naive"
+
+learning_rate: 4e-4
+
+source_type: "naive"
+data_dir: "/data/styles-finetune-data-artistic/tarot"
+prompt: "<0001>"
+ref_dir: "/data/image"

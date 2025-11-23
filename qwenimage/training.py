@@ -17,7 +17,7 @@ from wandml.trainers.experiment_trainer import ExperimentTrainer
 
 
 from qwenimage.finetuner import QwenLoraFinetuner
-from qwenimage.datasets import StyleSourceWithRandomRef
+from qwenimage.sources import StyleSourceWithRandomRef, StyleImagetoImageSource
 from qwenimage.task import TextToImageWithRefTask
 from qwenimage.datamodels import QwenConfig
 from qwenimage.foundation import QwenImageFoundation
@@ -50,11 +50,32 @@ def run_training(config_path: Path | str, update_config_paths: list[Path] | None
     )
 
     # Data
-    src = StyleSourceWithRandomRef("/data/styles-finetune-data-artistic/tarot", "<0001>", "/data/image", set_len=1000)
-    task = TextToImageWithRefTask()
     dp = WandDataPipe()
-    dp.add_source(src)
-    dp.set_task(task)
+    dp.set_task(TextToImageWithRefTask())
+    dp_test = WandDataPipe()
+    dp_test.set_task(TextToImageWithRefTask())
+    if config.source_type == "naive":
+        src = StyleSourceWithRandomRef(
+            config.data_dir, config.prompt, config.ref_dir, set_len=config.max_train_steps
+        )
+        dp.add_source(src)
+    elif config.source_type == "im2im":
+        src = StyleImagetoImageSource(
+            csv_path=config.csv_path,
+            base_dir=config.base_dir,
+            style_title=config.style_title,
+            data_range=config.train_range,
+        )
+        dp.add_source(src)
+        src_test = StyleImagetoImageSource(
+            csv_path=config.csv_path,
+            base_dir=config.base_dir,
+            style_title=config.style_title,
+            data_range=config.test_range,
+        )
+        dp_test.add_source(src_test)
+    else: 
+        raise ValueError()
 
 
     # Model
@@ -63,7 +84,21 @@ def run_training(config_path: Path | str, update_config_paths: list[Path] | None
     finetuner.load(None)
 
 
-    trainer = ExperimentTrainer(foundation,dp,config)
+    if len(dp_test) == 0:
+        dp_test = None
+    if config.val_with == "train":
+        dp_val = dp
+    elif config.val_with == "test":
+        dp_val = dp_test
+    else:
+        raise ValueError()
+    trainer = ExperimentTrainer(
+        model=foundation,
+        datapipe=dp,
+        args=config,
+        validation_datapipe=dp_val,
+        test_datapipe=dp_test,
+    )
     trainer.train()
 
 

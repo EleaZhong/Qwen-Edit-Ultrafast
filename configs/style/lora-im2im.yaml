@@ -1,0 +1,18 @@
+wandb_run_name: "lora-im2im"
+output_dir: "/data/checkpoints/lora-im2im"
+
+learning_rate: 1e-4
+num_train_epochs: 1
+max_train_steps: 1000
+preprocessing_epoch_len: 33
+preprocessing_epoch_repetitions: 31
+num_validation_images: 2
+num_sample_images: 2
+
+source_type: "im2im"
+style_title: "Simpsons"
+csv_path: "/data/chatgpt-style-transfer-data/output/results.csv"
+base_dir: "/data/chatgpt-style-transfer-data"
+train_range: [2, 35]
+test_range: [0, 2]
+val_with: test
