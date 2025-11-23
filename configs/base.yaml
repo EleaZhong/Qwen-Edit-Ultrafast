@@ -1,0 +1,36 @@
+# Name
+wandb_run_name: null
+output_dir: "/data/checkpoints/base"
+logger_service: wandb
+
+
+# Training parameters
+num_train_epochs: 1
+max_train_steps: null
+gradient_accumulation_steps: 1
+train_batch_size: 1
+optim: "adamw"
+learning_rate: 1.0e-4
+num_workers: 4
+resume_from_checkpoint: null
+log_model_steps: 100
+preprocessing_epoch_len: 64
+
+
+# Logging
+record_training: true
+wand_project_name: "qwen"
+wandb_entity: "eleazhong"
+gcs_bucket: null # no upload
+num_validation_images: 32
+num_sample_images: 4
+validation_steps:
+  "on": [100]
+  every: 500
+sample_steps:
+  "on": [100]
+  every: 500
+global_step: 0
+save_steps: 1000
+log_batch_steps: 500
+seed: 67

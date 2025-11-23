@@ -44,3 +44,4 @@ class TextToImageWithRefTask(Task):
         "prompt": SourceDataType(name="text", type=str),
         "image": SourceDataType(name="reference", type=Image.Image),
     }
+

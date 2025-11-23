@@ -2,8 +2,10 @@
 
 from collections import OrderedDict
 from PIL import Image
+from torchao import quantize_
 from torchao.quantization import Float8DynamicActivationFloat8WeightConfig, Float8WeightOnlyConfig, Int4WeightOnlyConfig, Int8DynamicActivationInt8WeightConfig, Int8WeightOnlyConfig, ModuleFqnToConfig, PerRow
-from qwenimage.debug import ftimed
+from torchao.utils import get_model_size_in_bytes
+from qwenimage.debug import ftimed, print_first_param
 from qwenimage.experiments.experiments_qwen import ExperimentRegistry, QwenBaseExperiment
 from qwenimage.models.attention_processors import QwenDoubleStreamAttnProcessorFA3
 from qwenimage.optimization import optimize_pipeline_
@@ -221,6 +223,20 @@ class Qwen_FA3_AoT_fp8darow_nolast(QwenBaseExperiment):
                 "num_inference_steps":4
             }
         )
+
+def quantize_transformer_fp8darow_nolast(model):
+    module_fqn_to_config = ModuleFqnToConfig(
+        OrderedDict([
+            (ATTN_LAST_LAYER, None),
+            # ("_default",Float8DynamicActivationFloat8WeightConfig(granularity=PerRow()),),
+            ("_default",Float8DynamicActivationFloat8WeightConfig(),),
+        ])
+    )
+    print(f"original model size: {get_model_size_in_bytes(model) / 1024 / 1024} MB")
+    quantize_(model, module_fqn_to_config)
+    print_first_param(model)
+    print(f"quantized model size: {get_model_size_in_bytes(model) / 1024 / 1024} MB")
+
 
 @ExperimentRegistry.register(name="qwen_fa3_aot_fp8darow_nofirstlast")
 class Qwen_FA3_AoT_fp8darow_nofirstlast(QwenBaseExperiment):

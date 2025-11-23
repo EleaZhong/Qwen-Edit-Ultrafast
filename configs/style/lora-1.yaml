@@ -1,0 +1,4 @@
+wandb_run_name: "lora-naive"
+output_dir: "/data/checkpoints/lora-naive"
+
+learning_rate: 4e-4

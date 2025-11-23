@@ -17,6 +17,7 @@ import math
 from typing import Any, Callable, Dict, List, Optional, Union
 import warnings
 
+from PIL import Image
 import numpy as np
 import torch
 # from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
@@ -236,12 +237,18 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
     def _get_qwen_prompt_embeds(
         self,
         prompt: Union[str, List[str]] = None,
-        image: Optional[torch.Tensor] = None,
+        image: Optional[torch.Tensor] | Image.Image = None,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
         device = device or self._execution_device
         dtype = dtype or self.text_encoder.dtype
+
+        print("_get_qwen_prompt_embeds, image")
+        if isinstance(image, torch.Tensor):
+            texam(image)
+        else:
+            print(image)
 
         prompt = [prompt] if isinstance(prompt, str) else prompt
         img_prompt_template = "Picture {}: <|vision_start|><|image_pad|><|vision_end|>"
@@ -265,6 +272,10 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             padding=True,
             return_tensors="pt",
         ).to(device)
+    
+        print(model_inputs)
+        print("_get_qwen_prompt_embeds, model_inputs.pixel_values")
+        texam(model_inputs.pixel_values)
 
         outputs = self.text_encoder(
             input_ids=model_inputs.input_ids,
@@ -295,7 +306,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
     def encode_prompt(
         self,
         prompt: Union[str, List[str]],
-        image: Optional[torch.Tensor] = None,
+        image: Optional[torch.Tensor] | Image.Image = None,
         device: Optional[torch.device] = None,
         num_images_per_prompt: int = 1,
         prompt_embeds: Optional[torch.Tensor] = None,
@@ -330,6 +341,9 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
         prompt_embeds_mask = prompt_embeds_mask.repeat(1, num_images_per_prompt, 1)
         prompt_embeds_mask = prompt_embeds_mask.view(batch_size * num_images_per_prompt, seq_len)
+
+        print("encode_prompt, prompt_embeds")
+        texam(prompt_embeds)
 
         return prompt_embeds, prompt_embeds_mask
 
@@ -419,12 +433,16 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
     @ftimed
     def _encode_vae_image(self, image: torch.Tensor, generator: torch.Generator):
         if isinstance(generator, list):
+            print("_encode_vae_image, image, list")
+            texam(image[0])
             image_latents = [
                 retrieve_latents(self.vae.encode(image[i : i + 1]), generator=generator[i], sample_mode="argmax")
                 for i in range(image.shape[0])
             ]
             image_latents = torch.cat(image_latents, dim=0)
         else:
+            print("_encode_vae_image, image")
+            texam(image)
             image_latents = retrieve_latents(self.vae.encode(image), generator=generator, sample_mode="argmax")
         latents_mean = (
             torch.tensor(self.vae.config.latents_mean)
@@ -437,7 +455,8 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             .to(image_latents.device, image_latents.dtype)
         )
         image_latents = (image_latents - latents_mean) / latents_std
-
+        print("_encode_vae_image, image_latents")
+        texam(image_latents)
         return image_latents
 
     def prepare_latents(
@@ -761,6 +780,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             ] * batch_size
 
             # 5. Prepare timesteps
+            print(f"{num_inference_steps=}")
             sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps) if sigmas is None else sigmas
             image_seq_len = latents.shape[1]
             print(f"{image_seq_len=}")

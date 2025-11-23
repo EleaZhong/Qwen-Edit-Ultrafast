@@ -1,9 +1,9 @@
+import enum
+from typing import Literal
 
-
-
+import torch
 from diffusers.image_processor import PipelineImageInput
 from pydantic import BaseModel, ConfigDict, Field
-import torch
 
 from wandml.foundation.datamodels import FluxInputs
 from wandml.trainers.datamodels import ExperimentTrainerParameters
@@ -27,6 +27,12 @@ class QwenInputs(BaseModel):
     )
 
 
+class QuantOptions(str, enum.Enum):
+    INT8WO = "int8wo"
+    INT4WO = "int4wo"
+    FP8ROW = "fp8row"
+
+
 class QwenConfig(ExperimentTrainerParameters):
     load_multi_view_lora: bool = False
     train_max_sequence_length: int = 512
@@ -38,3 +44,6 @@ class QwenConfig(ExperimentTrainerParameters):
     loss_weight_dist: str | None = None # "scaled_clipped_gaussian", "logit-normal"
 
     vae_image_size: int = 1024 * 1024
+    offload_text_encoder: bool = True
+    quantize_text_encoder: bool = False
+    quantize_transformer: bool = False

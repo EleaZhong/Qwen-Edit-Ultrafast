@@ -7,13 +7,20 @@ from typing import Callable
 from typing import ParamSpec
 from spaces.zero.torch.aoti import ZeroGPUCompiledModel, ZeroGPUWeights
 from torchao.core.config import AOBaseConfig
-from torchao.quantization import quantize_
-from torchao.quantization import Int8WeightOnlyConfig
+from torchao.quantization import (
+    quantize_,
+    Float8DynamicActivationFloat8WeightConfig,
+    Int4WeightOnlyConfig,
+    Int4WeightOnlyConfig,
+    Int8WeightOnlyConfig,
+    PerRow,
+)
 import spaces
 import torch
 from torch.utils._pytree import tree_map
 from torchao.utils import get_model_size_in_bytes
 
+from qwenimage.datamodels import QuantOptions
 from qwenimage.debug import ftimed, print_first_param
 
 
@@ -127,3 +134,18 @@ def optimize_pipeline_(
 
     aoti_apply(compiled_transformer, pipeline.transformer)
 
+
+def simple_quantize_model(model, quant_option: QuantOptions):
+    if quant_option == QuantOptions.INT8WO:
+        aoconfig = Int8WeightOnlyConfig()
+    elif quant_option == QuantOptions.INT4WO:
+        aoconfig = Int4WeightOnlyConfig()
+    elif quant_option == QuantOptions.FP8ROW:
+        aoconfig = Float8DynamicActivationFloat8WeightConfig(granularity=PerRow())
+    else:
+        raise ValueError()
+    print(f"original model size: {get_model_size_in_bytes(model) / 1024 / 1024} MB")
+    quantize_(model, aoconfig)
+    print_first_param(model)
+    print(f"quantized model size: {get_model_size_in_bytes(model) / 1024 / 1024} MB")
+    return model

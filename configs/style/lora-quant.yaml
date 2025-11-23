@@ -1,0 +1,6 @@
+wandb_run_name: "lora-quant"
+output_dir: "/data/checkpoints/lora-quant"
+
+quantize_text_encoder: 
+quantize_transformer: true
+offload: true

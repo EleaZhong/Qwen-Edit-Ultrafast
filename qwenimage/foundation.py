@@ -11,10 +11,13 @@ import torch.nn.functional as F
 from einops import rearrange
 
 from qwenimage.datamodels import QwenConfig, QwenInputs
-from qwenimage.debug import print_gpu_memory
+from qwenimage.debug import ctimed, ftimed, print_gpu_memory, texam
+from qwenimage.experiments.quantize_text_encoder_experiments import quantize_text_encoder_int4wo_linear
+from qwenimage.experiments.quantize_experiments import quantize_transformer_fp8darow_nolast
 from qwenimage.models.encode_prompt import encode_prompt
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
+from qwenimage.optimization import simple_quantize_model
 from qwenimage.sampling import TimestepDistUtils
 from wandml import WandModel
 
@@ -89,6 +92,13 @@ class QwenImageFoundation(WandModel):
         )
         self.static_prompt_embeds = None
 
+        if self.config.quantize_text_encoder:
+            quantize_text_encoder_int4wo_linear(self.text_encoder)
+        
+        if self.config.quantize_transformer:
+            quantize_transformer_fp8darow_nolast(self.transformer)
+
+
     def load(self, load_path):
         if not isinstance(load_path, Path): 
             load_path = Path(load_path)
@@ -121,6 +131,8 @@ class QwenImageFoundation(WandModel):
     
     def pil_to_latents(self, images):
         image = self.pipe.image_processor.preprocess(images)
+        print("pil_to_latents, image")
+        texam(image)
         image = image.unsqueeze(2) # N, C, F=1, H, W
         image = image.to(device=self.device, dtype=self.dtype)
         latents = self.pipe.vae.encode(image).latent_dist.mode() # argmax
@@ -137,6 +149,8 @@ class QwenImageFoundation(WandModel):
         )
         latents = (latents - latents_mean) / latents_std
         latents = latents.squeeze(2)
+        print("pil_to_latents, latents")
+        texam(latents)
         return latents.to(dtype=self.dtype)
 
     def latents_to_pil(self, latents):
@@ -188,16 +202,17 @@ class QwenImageFoundation(WandModel):
         prompt_embeds_mask = prompt_embeds_mask.cpu().clone().detach()
         self.static_prompt_embeds = (prompt_embeds, prompt_embeds_mask)
 
-
+    @ftimed
     def preprocess_batch(self, batch):
         prompts = batch["text"]
 
         if self.static_prompt_embeds is not None:
             prompt_embeds, prompt_embeds_mask = self.static_prompt_embeds
 
-        self.text_encoder.to(device=self.device)
-        if self.text_encoder_device != "cuda":
-            self.text_encoder_device = "cuda"
+        with ctimed("text_encoder.cuda()"):
+            self.text_encoder.to(device=self.device)
+            if self.text_encoder_device != "cuda":
+                self.text_encoder_device = "cuda"
 
         with torch.no_grad():
             prompt_embeds, prompt_embeds_mask = encode_prompt(
@@ -208,6 +223,13 @@ class QwenImageFoundation(WandModel):
                 dtype=self.dtype,
                 max_sequence_length = self.config.train_max_sequence_length,
             )
+            # prompt_embeds, prompt_embeds_mask = foundation.pipe.encode_prompt(
+            #         inps[i]["prompt"],
+            #         _transforms(inps[i]["image"][0]).mul(255),
+            #         device="cuda",
+            #         # dtype=foundation.dtype,
+            #         max_sequence_length = foundation.config.train_max_sequence_length,
+            #     )
         prompt_embeds = prompt_embeds.cpu().clone().detach()
         prompt_embeds_mask = prompt_embeds_mask.cpu().clone().detach()
 
@@ -216,11 +238,14 @@ class QwenImageFoundation(WandModel):
 
         return batch
 
+    @ftimed
     def single_step(self, batch) -> torch.Tensor:
-        self.text_encoder.to(device="cpu") # offload
-        if self.text_encoder_device != "cpu":
-            self.text_encoder_device = "cpu"
-            print_gpu_memory()
+        with ctimed("text_encoder.cpu()"):
+            if self.config.offload_text_encoder:
+                self.text_encoder.to(device="cpu") # offload
+                if self.text_encoder_device != "cpu":
+                    self.text_encoder_device = "cpu"
+                    print_gpu_memory()
 
         if "prompt_embeds" not in batch:
             batch = self.preprocess_batch(batch)
@@ -268,9 +293,11 @@ class QwenImageFoundation(WandModel):
 
 
     def base_pipe(self, inputs: QwenInputs) -> list[Image]:
-        self.text_encoder.to(device=self.device)
-        if self.text_encoder_device != "cuda":
-            self.text_encoder_device = "cuda"
+        print(inputs)
+        with ctimed("text_encoder.cuda()"):
+            self.text_encoder.to(device=self.device)
+            if self.text_encoder_device != "cuda":
+                self.text_encoder_device = "cuda"
         return self.pipe(**inputs.model_dump()).images
     
 
