@@ -14,6 +14,7 @@ torchao==0.14.1
 pydantic
 pandas
 modal
+datasets
 
 para-attn
 lpips

@@ -173,7 +173,7 @@ def calculate_dimensions(target_area, ratio):
     return width, height
 
 
-class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
+class QwenImageEditSaveIntermPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
     r"""
     The Qwen-Image-Edit pipeline for image editing.
 
@@ -659,6 +659,9 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             [`~pipelines.qwenimage.QwenImagePipelineOutput`] if `return_dict` is True, otherwise a `tuple`. When
             returning a tuple, the first element is a list with the generated images.
         """
+
+        output_dict = {}
+
         with ctimed("Preprocessing"):
             image_size = image[-1].size if isinstance(image, list) else image.size
             if latent_size_override:
@@ -749,6 +752,8 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                 num_images_per_prompt=num_images_per_prompt,
                 max_sequence_length=max_sequence_length,
             )
+            output_dict["prompt_embeds"] = prompt_embeds.clone().cpu()
+            output_dict["prompt_embeds_mask"] = prompt_embeds_mask.clone().cpu()
             if do_true_cfg:
                 negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt(
                     image=condition_images,
@@ -774,6 +779,9 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                 generator,
                 latents,
             )
+            output_dict["noise"] = latents.clone().cpu()
+            output_dict["image_latents"] = image_latents.clone().cpu()
+            output_dict["vae_image_sizes"] = vae_image_sizes
             img_shapes = [
                 [
                     (1, height // self.vae_scale_factor // 2, width // self.vae_scale_factor // 2),
@@ -826,6 +834,9 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                 self._attention_kwargs = {}
 
             txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist() if prompt_embeds_mask is not None else None
+
+            output_dict["img_shapes"] = img_shapes
+            output_dict["txt_seq_lens"] = txt_seq_lens
             
             image_rotary_emb = self.transformer.pos_embed(img_shapes, txt_seq_lens, device=latents.device)
             if do_true_cfg:
@@ -857,11 +868,13 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
 
                         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                         timestep = t.expand(latents.shape[0]).to(latents.dtype)
+                        output_dict[f"t_{i}"] = (timestep / 1000).clone().cpu()
+                        output_dict[f"latents_{i}_start"] = latents.clone().cpu()
                         with self.transformer.cache_context("cond"):
                             noise_pred = self.transformer(
                                 hidden_states=latent_model_input,
                                 timestep=timestep / 1000,
-                                guidance=guidance,
+                                guidance=guidance, 
                                 encoder_hidden_states_mask=prompt_embeds_mask,
                                 encoder_hidden_states=prompt_embeds,
                                 image_rotary_emb=image_rotary_emb,
@@ -869,6 +882,8 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                                 return_dict=False,
                             )[0]
                             noise_pred = noise_pred[:, : latents.size(1)]
+                        
+                        output_dict[f"noise_pred_{i}"] = noise_pred.clone().cpu()
 
                         if do_true_cfg:
                             warnings.warn("doing true CFG")
@@ -894,6 +909,8 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                         latents_dtype = latents.dtype
                         latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
+                        # output_dict[f"latents_{i}"] = latents.clone().cpu()
+
                         if latents.dtype != latents_dtype:
                             if torch.backends.mps.is_available():
                                 # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
@@ -915,34 +932,41 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                         if XLA_AVAILABLE:
                             xm.mark_step()
 
+        output_dict["output"] = latents.clone().cpu()
+
+        output_dict["height"] = height
+        output_dict["width"] = width
+
+        return output_dict
+
         # with ctimed("Post (vae)"):
-        self._current_timestep = None
-        if output_type == "latent":
-            image = latents
-        else:
-            with ctimed("pre decode"):
-                latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
-                latents = latents.to(self.vae.dtype)
-                latents_mean = (
-                    torch.tensor(self.vae.config.latents_mean)
-                    .view(1, self.vae.config.z_dim, 1, 1, 1)
-                    .to(latents.device, latents.dtype)
-                )
-                latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(1, self.vae.config.z_dim, 1, 1, 1).to(
-                    latents.device, latents.dtype
-                )
-                latents = latents / latents_std + latents_mean
-            with ctimed("vae.decode"):
-                image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
-            with ctimed("post process"):
-                image = self.image_processor.postprocess(image, output_type=output_type)
+        # self._current_timestep = None
+        # if output_type == "latent":
+        #     image = latents
+        # else:
+        #     with ctimed("pre decode"):
+        #         latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+        #         latents = latents.to(self.vae.dtype)
+        #         latents_mean = (
+        #             torch.tensor(self.vae.config.latents_mean)
+        #             .view(1, self.vae.config.z_dim, 1, 1, 1)
+        #             .to(latents.device, latents.dtype)
+        #         )
+        #         latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(1, self.vae.config.z_dim, 1, 1, 1).to(
+        #             latents.device, latents.dtype
+        #         )
+        #         latents = latents / latents_std + latents_mean
+        #     with ctimed("vae.decode"):
+        #         image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
+        #     with ctimed("post process"):
+        #         image = self.image_processor.postprocess(image, output_type=output_type)
 
 
-        # Offload all models
-        with ctimed("offload"):
-            self.maybe_free_model_hooks()
+        # # Offload all models
+        # with ctimed("offload"):
+        #     self.maybe_free_model_hooks()
 
-        if not return_dict:
-            return (image,)
+        # if not return_dict:
+        #     return (image,)
 
-        return QwenImagePipelineOutput(images=image)
+        # return QwenImagePipelineOutput(images=image)

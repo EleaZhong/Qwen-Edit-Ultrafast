@@ -16,6 +16,7 @@ from qwenimage.debug import ctimed, ftimed, print_gpu_memory, texam
 from qwenimage.experiments.quantize_text_encoder_experiments import quantize_text_encoder_int4wo_linear
 from qwenimage.experiments.quantize_experiments import quantize_transformer_fp8darow_nolast
 from qwenimage.models.pipeline_qwenimage_edit_plus import CONDITION_IMAGE_SIZE, QwenImageEditPlusPipeline, calculate_dimensions
+from qwenimage.models.pipeline_qwenimage_edit_save_interm import QwenImageEditSaveIntermPipeline
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
 from qwenimage.optimization import simple_quantize_model
 from qwenimage.sampling import TimestepDistUtils
@@ -314,3 +315,15 @@ class QwenImageFoundation(WandModel):
     
 
 
+class QwenImageFoundationSaveInterm(QwenImageFoundation):
+    PIPELINE = QwenImageEditSaveIntermPipeline
+
+    def base_pipe(self, inputs: QwenInputs) -> list[Image]:
+        print(inputs)
+        image = inputs.image[0]
+        w,h = image.size
+        h_r, w_r = calculate_dimensions(self.config.vae_image_size, h/w)
+        image = TF.resize(image, (h_r, w_r))
+        inputs.image = [image]
+        return self.pipe(**inputs.model_dump())
+    
