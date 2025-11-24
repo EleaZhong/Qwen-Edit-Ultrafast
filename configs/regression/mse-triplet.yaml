@@ -8,4 +8,6 @@ train_loss_terms:
 validation_loss_terms:
   mse: 1.0
   triplet: 1.0
- 
+
+
+triplet_margin: -500 # tune

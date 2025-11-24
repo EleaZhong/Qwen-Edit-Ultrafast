@@ -1,11 +1,21 @@
+from typing import Optional, Tuple
+import warnings
+
 from diffusers.models.attention_processor import Attention
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 import torch
 import torch.nn.functional as F
-from typing import Optional, Tuple
 from diffusers.models.transformers.transformer_qwenimage import apply_rotary_emb_qwen
 
-from sageattention import sageattn, sageattn_qk_int8_pv_fp16_cuda, sageattn_qk_int8_pv_fp16_triton, sageattn_qk_int8_pv_fp8_cuda, sageattn_qk_int8_pv_fp8_cuda_sm90
+try:
+    from sageattention import sageattn, sageattn_qk_int8_pv_fp16_cuda, sageattn_qk_int8_pv_fp16_triton, sageattn_qk_int8_pv_fp8_cuda, sageattn_qk_int8_pv_fp8_cuda_sm90
+except ImportError:
+    sageattn = None
+    sageattn_qk_int8_pv_fp16_cuda = None
+    sageattn_qk_int8_pv_fp16_triton = None
+    sageattn_qk_int8_pv_fp8_cuda = None
+    sageattn_qk_int8_pv_fp8_cuda_sm90 = None
+    warnings.warn("Sageattention not imported")
 
 try:
     from kernels import get_kernel

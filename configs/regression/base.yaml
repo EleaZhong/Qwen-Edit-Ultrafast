@@ -7,11 +7,11 @@ max_train_steps: null
 preprocessing_epoch_len: 0
 preprocessing_epoch_repetitions: 1
 num_validation_images: &val_num 32
-num_sample_images: 2
+num_sample_images: 4
 train_range: [*val_num, null]
 val_range: [0, *val_num]
-test_range: [2, 4]
-regression_base_pipe_steps: 8
+test_range: [0, 4]
+regression_base_pipe_steps: 4
 
 training_type: "regression"
 

@@ -460,6 +460,9 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
 
             if loss_accumulator.has("pixel_lpips"):
                 lpips_loss = self.lpips_fn(pixel_values_x0_gt, pixel_values_x0_pred)
+                texam(lpips_loss, "lpips_loss")
+                lpips_loss = lpips_loss.mean()
+                texam(lpips_loss, "lpips_loss")
                 loss_accumulator.accum("pixel_lpips", lpips_loss)
             
             if loss_accumulator.has("pixel_mse"):
@@ -511,12 +514,13 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
         v_neg_1d,
         v_pred_1d,
         visualize_velocities=True,
-    ):
+    ):  
+        t_float = t.float().cpu().item()
         x_0_pred = x_t_1d - t * v_pred_1d
         x_0_neg = x_t_1d - t * v_neg_1d
         x_0_recon = x_t_1d - t * v_gt_1d
         log_pils = {
-            "x_t_1d": self.latents_to_pil(x_t_1d, h=h_f16, w=w_f16),
+            f"x_{t_float}_1d": self.latents_to_pil(x_t_1d, h=h_f16, w=w_f16),
             "x_0": self.latents_to_pil(x_0_1d, h=h_f16, w=w_f16),
             "x_0_recon": self.latents_to_pil(x_0_recon, h=h_f16, w=w_f16),
             "x_0_pred": self.latents_to_pil(x_0_pred, h=h_f16, w=w_f16),

@@ -16,13 +16,14 @@ from wandml import WandAuth
 
 from qwenimage.training import run_training
 REQUIREMENTS_PATH = os.path.abspath("requirements.txt")
+WAND_REQUIREMENTS_PATH = os.path.abspath("scripts/wand_requirements.txt")
 
 local_modules = ["qwenimage","wandml","scripts"]
 
 ## Fal zone
 @fal.function(
     machine_type="GPU-H100",
-    requirements=get_requirements(REQUIREMENTS_PATH),
+    requirements=get_requirements(REQUIREMENTS_PATH, WAND_REQUIREMENTS_PATH),
     local_python_modules = local_modules,
     max_concurrency=16,
     request_timeout=6*60*60,
@@ -54,22 +55,24 @@ modalapp.image = (
     modal.Image.debian_slim(python_version="3.10")
     .apt_install("git", "ffmpeg", "libsm6", "libxext6")
     .pip_install_from_requirements(REQUIREMENTS_PATH)
+    .pip_install_from_requirements(WAND_REQUIREMENTS_PATH)
+    .add_local_python_source(*local_modules)
 )
-
-for module in local_modules:
-    modalapp.image.add_local_python_source(module)
 
 
 @modalapp.function(
-    gpu="H100",
-    max_containers=16,
-    timeout=24 * 60 * 60,
+    gpu="B200",
+    max_containers=1,
+    timeout=4 * 60 * 60,
     volumes={
         "/data/wand_cache": modal.Volume.from_name("FLUX_MODELS"),
-        # "/data/Datasets": modal.Volume.from_name("Datasets", create_if_missing=True),
-        # "/data/wand-1": modal.Volume.from_name("wand-1-train-data", create_if_missing=True),
         "/data/checkpoints": modal.Volume.from_name("training_checkpoints", create_if_missing=True),
         "/root/.cache/torch/hub/checkpoints": modal.Volume.from_name("torch_hub_checkpoints", create_if_missing=True),
+
+        "/root/.cache/huggingface/hub":  modal.Volume.from_name("hf_cache", create_if_missing=True),
+
+        "/data/regression_data": modal.Volume.from_name("regression_data"),
+        "/data/edit_data": modal.Volume.from_name("edit_data"),
     },
     secrets=[
         modal.Secret.from_name("wand-modal-gcloud-keyfile"),
@@ -156,7 +159,7 @@ def parse_args():
     return args
 
 if __name__ == "__main__":
-    WandAuth(ignore=True)
+    WandAuth()
 
     args = parse_args()
 

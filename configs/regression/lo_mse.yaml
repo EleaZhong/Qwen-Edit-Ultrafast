@@ -1,0 +1,2 @@
+train_loss_terms:
+  mse: 0.1
