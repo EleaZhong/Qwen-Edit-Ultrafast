@@ -1,0 +1,11 @@
+wandb_run_name: "reg-mse-triplet"
+output_dir: "/data/checkpoints/reg-mse-triplet"
+
+train_loss_terms:
+  mse: 1.0
+  triplet: 1.0
+
+validation_loss_terms:
+  mse: 1.0
+  triplet: 1.0
+ 

@@ -241,12 +241,16 @@ def fretry(func=None, *, exceptions=(Exception,), mod_args:tuple[Callable|None, 
         return decorator(func)
 
 
-def texam(t: torch.Tensor):
-    print(f"Shape: {tuple(t.shape)}")
+def texam(t: torch.Tensor, name=None):
+    if name is None:
+        name = ""
+    else:
+        name += " " # spacing
+    print(f"{name}Shape: {tuple(t.shape)}")
     if t.dtype.is_floating_point or t.dtype.is_complex:
         mean_val = t.mean().item()
     else:
         mean_val = "N/A"
-    print(f"Min: {t.min().item()}, Max: {t.max().item()}, Mean: {mean_val}")
-    print(f"Device: {t.device}, Dtype: {t.dtype}, Requires Grad: {t.requires_grad}")
+    print(f"{name}Min: {t.min().item()}, Max: {t.max().item()}, Mean: {mean_val}")
+    print(f"{name}Device: {t.device}, Dtype: {t.dtype}, Requires Grad: {t.requires_grad}")
 

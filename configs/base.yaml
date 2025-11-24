@@ -13,7 +13,7 @@ optim: "adamw"
 learning_rate: 1.0e-4
 num_workers: 4
 resume_from_checkpoint: null
-log_model_steps: 100
+log_model_steps: null
 preprocessing_epoch_len: 64
 preprocessing_epoch_repetitions: 1
 

@@ -45,3 +45,17 @@ class TextToImageWithRefTask(Task):
         "image": SourceDataType(name="reference", type=Image.Image),
     }
 
+class RegressionTask(Task):
+    data_types = [
+        SourceDataType(name="data", type=dict),
+    ]
+    type_transforms = [
+        Task.identity,
+    ]
+    batch_type_transforms = [
+        Task.identity,
+    ]
+    sample_type_transforms = [
+        Task.identity,
+    ]
+    sample_input_dict = {}

@@ -5,6 +5,7 @@ import warnings
 
 from PIL import Image
 from diffusers.pipelines.qwenimage.pipeline_qwenimage import QwenImagePipeline
+import lpips
 import torch
 from safetensors.torch import load_file, save_model
 import torch.nn.functional as F
@@ -12,15 +13,18 @@ import torchvision.transforms.v2.functional as TF
 from einops import rearrange
 
 from qwenimage.datamodels import QwenConfig, QwenInputs
-from qwenimage.debug import ctimed, ftimed, print_gpu_memory, texam
+from qwenimage.debug import clear_cuda_memory, ctimed, ftimed, print_gpu_memory, texam
 from qwenimage.experiments.quantize_text_encoder_experiments import quantize_text_encoder_int4wo_linear
 from qwenimage.experiments.quantize_experiments import quantize_transformer_fp8darow_nolast
+from qwenimage.loss import LossAccumulator
 from qwenimage.models.pipeline_qwenimage_edit_plus import CONDITION_IMAGE_SIZE, QwenImageEditPlusPipeline, calculate_dimensions
 from qwenimage.models.pipeline_qwenimage_edit_save_interm import QwenImageEditSaveIntermPipeline
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
 from qwenimage.optimization import simple_quantize_model
 from qwenimage.sampling import TimestepDistUtils
 from wandml import WandModel
+from wandml.core.logger import wand_logger
+from wandml.trainers.experiment_trainer import ExperimentTrainer
 
 
 class QwenImageFoundation(WandModel):
@@ -159,8 +163,13 @@ class QwenImageFoundation(WandModel):
         texam(latents)
         return latents.to(dtype=self.dtype)
 
-    def latents_to_pil(self, latents):
-        latents = latents.clone().detach()
+    def latents_to_pil(self, latents, h=None, w=None, with_grad=False):
+        if not with_grad:
+            latents = latents.clone().detach()
+        if latents.dim() == 3:  # 1d latent
+            if h is None or w is None:
+                raise ValueError(f"auto unpack needs h,w, got {h=}, {w=}")
+            latents = self.unpack_latents(latents, h=h, w=w)
         latents = latents.unsqueeze(2)
 
         latents = latents.to(self.dtype)
@@ -178,6 +187,11 @@ class QwenImageFoundation(WandModel):
 
         latents = latents.to(device=self.device, dtype=self.dtype)
         image = self.pipe.vae.decode(latents, return_dict=False)[0][:, :, 0] # F = 1
+
+        if with_grad:
+            texam(image, "latents_to_pil.image")
+            return image
+
         image = self.pipe.image_processor.postprocess(image)
         return image
 
@@ -191,6 +205,15 @@ class QwenImageFoundation(WandModel):
         latents = rearrange(packed, "b (h w) (c ph pw) -> b c (h ph) (w pw)", ph=2, pw=2, h=h, w=w)
         return latents
 
+    @ftimed
+    def offload_text_encoder(self, device=str|torch.device):
+        if self.text_encoder_device == device:
+            return
+        print(f"Moving text encoder to {device}")
+        self.text_encoder_device = device
+        self.text_encoder.to(device)
+        if device == "cpu" or device == torch.device("cpu"):
+            print_gpu_memory(clear_mem="pre")
 
     @ftimed
     def preprocess_batch(self, batch):
@@ -204,11 +227,7 @@ class QwenImageFoundation(WandModel):
         print("preprocess_batch.references")
         texam(references)
         
-
-        with ctimed("text_encoder.cuda()"):
-            self.text_encoder.to(device=self.device)
-            if self.text_encoder_device != "cuda":
-                self.text_encoder_device = "cuda"
+        self.offload_text_encoder("cuda")
 
         with torch.no_grad():
             prompt_embeds, prompt_embeds_mask = self.pipe.encode_prompt(
@@ -229,12 +248,7 @@ class QwenImageFoundation(WandModel):
 
     @ftimed
     def single_step(self, batch) -> torch.Tensor:
-        with ctimed("text_encoder.cpu()"):
-            if self.config.offload_text_encoder:
-                self.text_encoder.to(device="cpu") # offload
-                if self.text_encoder_device != "cpu":
-                    self.text_encoder_device = "cpu"
-                    print_gpu_memory()
+        self.offload_text_encoder("cpu")
 
         if "prompt_embeds" not in batch:
             batch = self.preprocess_batch(batch)
@@ -302,10 +316,7 @@ class QwenImageFoundation(WandModel):
 
     def base_pipe(self, inputs: QwenInputs) -> list[Image]:
         print(inputs)
-        with ctimed("text_encoder.cuda()"):
-            self.text_encoder.to(device=self.device)
-            if self.text_encoder_device != "cuda":
-                self.text_encoder_device = "cuda"
+        self.offload_text_encoder("cuda")
         image = inputs.image[0]
         w,h = image.size
         h_r, w_r = calculate_dimensions(self.config.vae_image_size, h/w)
@@ -327,3 +338,189 @@ class QwenImageFoundationSaveInterm(QwenImageFoundation):
         inputs.image = [image]
         return self.pipe(**inputs.model_dump())
     
+
+class QwenImageRegressionFoundation(QwenImageFoundation):
+    def __init__(self, config:QwenConfig, device=None):
+        super().__init__(config, device=device)
+        self.lpips_fn = lpips.LPIPS(net='vgg').to(device=self.device)
+    
+    def preprocess_batch(self, batch):
+        return batch
+
+    @ftimed
+    def single_step(self, batch) -> torch.Tensor:
+        self.offload_text_encoder("cpu")
+
+        out_dict = batch["data"]
+        assert len(out_dict) == 1
+        out_dict = out_dict[0]
+
+        prompt_embeds = out_dict["prompt_embeds"]
+        prompt_embeds_mask = out_dict["prompt_embeds_mask"]
+        prompt_embeds = prompt_embeds.to(device=self.device, dtype=self.dtype)
+        prompt_embeds_mask = prompt_embeds_mask.to(device=self.device, dtype=self.dtype)
+
+        h_f16 = out_dict["height"] // 16
+        w_f16 = out_dict["width"] // 16
+        
+        refs_1d = out_dict["image_latents"].to(device=self.device, dtype=self.dtype)
+        t = out_dict["t"].to(device=self.device, dtype=self.dtype)
+        x_0_1d = out_dict["output"].to(device=self.device, dtype=self.dtype)
+        x_t_1d = out_dict["latents_start"].to(device=self.device, dtype=self.dtype)
+        v_neg_1d = out_dict["noise_pred"].to(device=self.device, dtype=self.dtype)
+
+        
+        v_gt_1d = (x_t_1d - x_0_1d) / t
+
+        inp_1d = torch.cat([x_t_1d, refs_1d], dim=1)
+        print("inp_1d")
+        texam(inp_1d)
+
+        img_shapes = out_dict["img_shapes"]
+        txt_seq_lens = out_dict["txt_seq_lens"]
+        image_rotary_emb = self.transformer.pos_embed(img_shapes, txt_seq_lens, device=self.device)
+
+        v_pred_1d = self.transformer(
+            hidden_states=inp_1d,
+            encoder_hidden_states=prompt_embeds,
+            encoder_hidden_states_mask=prompt_embeds_mask,
+            timestep=t,
+            image_rotary_emb=image_rotary_emb,
+            return_dict=False,
+        )[0]
+
+        v_pred_1d = v_pred_1d[:, : x_t_1d.size(1)]
+
+
+        split = batch["split"]
+        step = batch["step"]
+        if split == "train":
+            loss_terms = self.config.train_loss_terms.model_dump()
+        elif split == "validation":
+            loss_terms = self.config.validation_loss_terms.model_dump()
+        loss_accumulator = LossAccumulator(
+            terms=loss_terms,
+            step=step,
+            split=split,
+        )
+
+        if loss_accumulator.has("mse"):
+            if self.config.loss_weight_dist is not None:
+                mse_loss = F.mse_loss(v_pred_1d, v_gt_1d, reduction="none").mean(dim=[1,2,3])
+                weights = self.timestep_dist_utils.get_loss_weighting(t)
+                mse_loss = torch.mean(mse_loss * weights)
+            else:
+                mse_loss = F.mse_loss(v_pred_1d, v_gt_1d, reduction="mean")
+            loss_accumulator.accum("mse", mse_loss)
+        
+        if loss_accumulator.has("triplet"):
+            eps = 1e-6
+            margin = loss_terms["triplet_margin"]
+            v_span = (v_gt_1d - v_neg_1d).pow(2).sum(dim=(-2,-1))
+            diffv_gt_pred = (v_gt_1d - v_pred_1d).pow(2).sum(dim=(-2,-1))
+            diffv_neg_pred = (v_neg_1d - v_pred_1d).pow(2).sum(dim=(-2,-1))
+            diffv_gt_pred_reg = diffv_gt_pred / (v_span + eps)
+            diffv_neg_pred_reg = diffv_neg_pred / (v_span + eps)
+            
+            texam(v_span, name="v_span")
+            texam(diffv_gt_pred, name="diffv_gt_pred")
+            texam(diffv_neg_pred, name="diffv_neg_pred")
+            texam(diffv_gt_pred_reg, name="diffv_gt_pred_reg")
+            texam(diffv_neg_pred_reg, name="diffv_neg_pred_reg")
+            texam(diffv_gt_pred_reg - diffv_neg_pred_reg, name="diffv_gt_pred_reg - diffv_neg_pred_reg")
+            
+            triplet_loss = F.relu(diffv_gt_pred_reg - diffv_neg_pred_reg + margin).mean()
+            loss_accumulator.accum("triplet_loss", triplet_loss)
+
+        
+        if loss_accumulator.has("negative_mse"):
+            neg_mse_loss = -F.mse_loss(v_pred_1d, v_neg_1d, reduction="mean")
+            loss_accumulator.accum("negative_mse", neg_mse_loss)
+
+
+        if loss_accumulator.has("distribution_matching"):
+            dm_v = (v_pred_1d - v_neg_1d + v_gt_1d).detach()
+            dm_mse = F.mse_loss(v_pred_1d, dm_v, reduction="mean")
+            loss_accumulator.accum("distribution_matching", dm_mse)
+        
+        if loss_accumulator.has("negative_exponential"):
+            raise NotImplementedError()
+        
+        if loss_accumulator.has("pixel_lpips") or loss_accumulator.has("pixel_mse"):
+            x_0_pred = x_0_1d - t * v_pred_1d
+            pixel_values_x0_gt = self.latents_to_pil(x_0_1d, h=h_f16, w=w_f16).detach()
+            pixel_values_x0_pred = self.latents_to_pil(x_0_pred, h=h_f16, w=w_f16)
+
+            if loss_accumulator.has("pixel_lpips"):
+                lpips_loss = self.lpips_fn(pixel_values_x0_gt, pixel_values_x0_pred)
+                loss_accumulator.accum("pixel_lpips", lpips_loss)
+            
+            if loss_accumulator.has("pixel_mse"):
+                pixel_mse_loss = F.mse_loss(pixel_values_x0_pred, pixel_values_x0_gt, reduction="mean")
+                loss_accumulator.accum("pixel_mse", pixel_mse_loss)
+        
+        if loss_accumulator.has("adversarial"):
+            raise NotImplementedError()
+
+
+        loss = loss_accumulator.total
+
+        logs = loss_accumulator.logs()
+        wand_logger.log(logs, step=step, commit=False)
+
+        if self.should_log_training(step):
+            self.log_single_step_images(
+                h_f16,
+                w_f16,
+                t,
+                x_0_1d,
+                x_t_1d,
+                v_gt_1d,
+                v_neg_1d,
+                v_pred_1d,
+                visualize_velocities=True,
+            )
+        
+        return loss
+
+    def should_log_training(self, step) -> bool:
+        return (
+            self.training # don't log when validating
+            and ExperimentTrainer._is_step_trigger(step, self.config.log_batch_steps)
+        )
+
+    def log_single_step_images(
+        self,
+        h_f16,
+        w_f16,
+        t,
+        x_0_1d,
+        x_t_1d,
+        v_gt_1d,
+        v_neg_1d,
+        v_pred_1d,
+        visualize_velocities=True,
+    ):
+        x_0_pred = x_0_1d - t * v_pred_1d
+        x_0_neg = x_0_1d - t * v_neg_1d
+        log_pils = {
+            "x_t_1d": self.latents_to_pil(x_t_1d, h=h_f16, w=w_f16),
+            "x_0": self.latents_to_pil(x_0_1d, h=h_f16, w=w_f16),
+            "x_0_pred": self.latents_to_pil(x_0_pred, h=h_f16, w=w_f16),
+            "x_0_neg": self.latents_to_pil(x_0_neg, h=h_f16, w=w_f16),
+        }
+        if visualize_velocities:
+            log_pils.update({
+                "v_gt_1d": self.latents_to_pil(v_gt_1d, h=h_f16, w=w_f16),
+                "v_pred_1d": self.latents_to_pil(v_pred_1d, h=h_f16, w=w_f16),
+                "v_neg_1d": self.latents_to_pil(v_neg_1d, h=h_f16, w=w_f16),
+            })
+        
+        wand_logger.log({
+            "train_images": log_pils,
+        }, commit=False)
+
+        
+    def base_pipe(self, inputs: QwenInputs) -> list[Image]:
+        inputs.num_inference_steps = self.config.regression_base_pipe_steps  # override
+        return super().base_pipe(inputs)

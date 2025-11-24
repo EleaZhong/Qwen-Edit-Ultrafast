@@ -1,10 +1,12 @@
 import enum
+from pathlib import Path
 from typing import Literal
 
 import torch
 from diffusers.image_processor import PipelineImageInput
 from pydantic import BaseModel, ConfigDict, Field
 
+from qwenimage.types import DataRange
 from wandml.foundation.datamodels import FluxInputs
 from wandml.trainers.datamodels import ExperimentTrainerParameters
 
@@ -27,12 +29,33 @@ class QwenInputs(BaseModel):
         # extra="allow",
     )
 
+class TrainingType(str, enum.Enum):
+    IM2IM = "im2im"
+    NAIVE = "naive"
+    REGRESSION = "regression"
+
+    @property
+    def is_style(self):
+        return self in [TrainingType.NAIVE, TrainingType.IM2IM]
 
 class QuantOptions(str, enum.Enum):
     INT8WO = "int8wo"
     INT4WO = "int4wo"
     FP8ROW = "fp8row"
 
+LossTermSpecType = int|float|dict[str,int|float]|None
+
+class QwenLossTerms(BaseModel):
+    mse: LossTermSpecType = 1.0
+    triplet: LossTermSpecType = 0.0
+    negative_mse: LossTermSpecType = 0.0
+    distribution_matching: LossTermSpecType = 0.0
+    negative_exponential: LossTermSpecType = 0.0
+    pixel_lpips: LossTermSpecType = 0.0
+    pixel_mse: LossTermSpecType = 0.0
+    adversarial: LossTermSpecType = 0.0
+
+    triplet_margin: float = 0.2
 
 class QwenConfig(ExperimentTrainerParameters):
     load_multi_view_lora: bool = False
@@ -49,14 +72,27 @@ class QwenConfig(ExperimentTrainerParameters):
     quantize_text_encoder: bool = False
     quantize_transformer: bool = False
 
-    source_type: str = "im2im"
+
+    train_loss_terms:QwenLossTerms = Field(default_factory=QwenLossTerms)
+    validation_loss_terms:QwenLossTerms = Field(default_factory=QwenLossTerms)
+
+    training_type: TrainingType
+    train_range: DataRange|None=None
+    val_range: DataRange|None=None
+    test_range: DataRange|None=None
+
     style_title: str|None = None
-    base_dir: str|None = None
-    csv_path: str|None = None
-    data_dir: str|None = None
-    ref_dir: str|None = None
-    prompt: str|None = None
-    train_range: tuple[int|float,int|float]|None=None
-    test_range: tuple[int|float,int|float]|None=None
-    val_with: str = "train"
+    style_base_dir: str|None = None
+    style_csv_path: str|None = None
+    style_data_dir: str|None = None
+    style_ref_dir: str|None = None
+    style_val_with: str = "train"
+    naive_static_prompt: str|None = None
+
+    regression_data_dir: str|Path|None = None
+    regression_gen_steps: int = 50
+    editing_data_dir: str|Path|None = None
+    editing_total_per: int = 1
+    regression_base_pipe_steps: int = 8
+
 
