@@ -24,7 +24,7 @@ class LossAccumulator:
         self.unweighted: dict[str, Tensor] = {}
         self.weighted: dict[str, Tensor] = {}
 
-    def resolve_weight(self, name: str, step: int|None = None) -> float:
+    def resolve_weight(self, name: str) -> float:
         """
         loss weight spec:
           - float | int

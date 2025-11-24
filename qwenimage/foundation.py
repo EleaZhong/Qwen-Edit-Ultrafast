@@ -414,23 +414,30 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
             loss_accumulator.accum("mse", mse_loss)
         
         if loss_accumulator.has("triplet"):
-            eps = 1e-6
+            # eps = 1e-6
             margin = loss_terms["triplet_margin"]
-            v_span = (v_gt_1d - v_neg_1d).pow(2).sum(dim=(-2,-1))
+            # v_span = (v_gt_1d - v_neg_1d).pow(2).sum(dim=(-2,-1))
+
+            # triplet_weight = (v_gt_1d - v_neg_1d).pow(2).mean(dim=(-2,-1))
+
             diffv_gt_pred = (v_gt_1d - v_pred_1d).pow(2).sum(dim=(-2,-1))
             diffv_neg_pred = (v_neg_1d - v_pred_1d).pow(2).sum(dim=(-2,-1))
-            diffv_gt_pred_reg = diffv_gt_pred / (v_span + eps)
-            diffv_neg_pred_reg = diffv_neg_pred / (v_span + eps)
+            # diffv_gt_pred_reg = diffv_gt_pred # / (v_span + eps)
+            # diffv_neg_pred_reg = diffv_neg_pred # / (v_span + eps)
             
-            texam(v_span, name="v_span")
+            # texam(v_span, name="v_span")
+            # texam(triplet_weight, name="triplet_weight")
             texam(diffv_gt_pred, name="diffv_gt_pred")
             texam(diffv_neg_pred, name="diffv_neg_pred")
-            texam(diffv_gt_pred_reg, name="diffv_gt_pred_reg")
-            texam(diffv_neg_pred_reg, name="diffv_neg_pred_reg")
-            texam(diffv_gt_pred_reg - diffv_neg_pred_reg, name="diffv_gt_pred_reg - diffv_neg_pred_reg")
+            # texam(diffv_gt_pred_reg, name="diffv_gt_pred_reg")
+            # texam(diffv_neg_pred_reg, name="diffv_neg_pred_reg")
+            # texam(diffv_gt_pred_reg - diffv_neg_pred_reg, name="diffv_gt_pred_reg - diffv_neg_pred_reg")
             
-            triplet_loss = F.relu(diffv_gt_pred_reg - diffv_neg_pred_reg + margin).mean()
-            loss_accumulator.accum("triplet_loss", triplet_loss)
+            triplet_loss = F.relu(diffv_gt_pred - diffv_neg_pred + margin).mean()
+            # 
+            # triplet_loss = F.relu(diffv_gt_pred_reg - diffv_neg_pred_reg + margin).mean()
+            # triplet_loss = torch.mean(triplet_loss_batched * triplet_weight)
+            loss_accumulator.accum("triplet", triplet_loss)
 
         
         if loss_accumulator.has("negative_mse"):
@@ -447,9 +454,9 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
             raise NotImplementedError()
         
         if loss_accumulator.has("pixel_lpips") or loss_accumulator.has("pixel_mse"):
-            x_0_pred = x_0_1d - t * v_pred_1d
-            pixel_values_x0_gt = self.latents_to_pil(x_0_1d, h=h_f16, w=w_f16).detach()
-            pixel_values_x0_pred = self.latents_to_pil(x_0_pred, h=h_f16, w=w_f16)
+            x_0_pred = x_t_1d - t * v_pred_1d
+            pixel_values_x0_gt = self.latents_to_pil(x_0_1d, h=h_f16, w=w_f16, with_grad=True).detach()
+            pixel_values_x0_pred = self.latents_to_pil(x_0_pred, h=h_f16, w=w_f16, with_grad=True)
 
             if loss_accumulator.has("pixel_lpips"):
                 lpips_loss = self.lpips_fn(pixel_values_x0_gt, pixel_values_x0_pred)
@@ -467,6 +474,10 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
 
         logs = loss_accumulator.logs()
         wand_logger.log(logs, step=step, commit=False)
+        wand_logger.log({
+            "t": t.float().cpu().item()
+        }, step=step, commit=False)
+
 
         if self.should_log_training(step):
             self.log_single_step_images(
@@ -501,11 +512,13 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
         v_pred_1d,
         visualize_velocities=True,
     ):
-        x_0_pred = x_0_1d - t * v_pred_1d
-        x_0_neg = x_0_1d - t * v_neg_1d
+        x_0_pred = x_t_1d - t * v_pred_1d
+        x_0_neg = x_t_1d - t * v_neg_1d
+        x_0_recon = x_t_1d - t * v_gt_1d
         log_pils = {
             "x_t_1d": self.latents_to_pil(x_t_1d, h=h_f16, w=w_f16),
             "x_0": self.latents_to_pil(x_0_1d, h=h_f16, w=w_f16),
+            "x_0_recon": self.latents_to_pil(x_0_recon, h=h_f16, w=w_f16),
             "x_0_pred": self.latents_to_pil(x_0_pred, h=h_f16, w=w_f16),
             "x_0_neg": self.latents_to_pil(x_0_neg, h=h_f16, w=w_f16),
         }

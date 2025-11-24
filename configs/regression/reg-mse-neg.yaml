@@ -1,0 +1,11 @@
+wandb_run_name: "reg-mse"
+output_dir: "/data/checkpoints/reg-mse"
+
+train_loss_terms:
+  mse: 1.0
+  negative_mse: 1.0
+
+validation_loss_terms:
+  mse: 1.0
+  negative_mse: 1.0
+ 
