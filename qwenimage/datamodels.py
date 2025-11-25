@@ -76,7 +76,7 @@ class QwenConfig(ExperimentTrainerParameters):
     train_loss_terms:QwenLossTerms = Field(default_factory=QwenLossTerms)
     validation_loss_terms:QwenLossTerms = Field(default_factory=QwenLossTerms)
 
-    training_type: TrainingType
+    training_type: TrainingType|None=None
     train_range: DataRange|None=None
     val_range: DataRange|None=None
     test_range: DataRange|None=None

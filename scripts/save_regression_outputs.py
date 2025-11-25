@@ -12,6 +12,9 @@ from qwenimage.foundation import QwenImageFoundationSaveInterm
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--start-index", type=int, default=0)
+    parser.add_argument("--imsize", type=int, default=512)
+    parser.add_argument("--indir", type=str, default="/data/CrispEdit")
+    parser.add_argument("--outdir", type=str, default="/data/regression_output")
     args = parser.parse_args()
 
     total_per = 10
@@ -30,7 +33,7 @@ def main():
     for edit_type in EDIT_TYPES:
         to_concat = []
         for ds_n in range(total_per):
-            ds = load_dataset("parquet", data_files=f"/data/CrispEdit/{edit_type}_{ds_n:05d}.parquet", split="train")
+            ds = load_dataset("parquet", data_files=f"{args.indir}/{edit_type}_{ds_n:05d}.parquet", split="train")
             to_concat.append(ds)
         edit_type_concat = concatenate_datasets(to_concat)
         all_edit_datasets.append(edit_type_concat)
@@ -38,10 +41,10 @@ def main():
     # consistent ordering for indexing, also allow extension
     join_ds = interleave_datasets(all_edit_datasets)
 
-    save_base_dir = Path("/data/regression_output")
+    save_base_dir = Path(args.outdir)
     save_base_dir.mkdir(exist_ok=True, parents=True)
 
-    foundation = QwenImageFoundationSaveInterm(QwenConfig())
+    foundation = QwenImageFoundationSaveInterm(QwenConfig(vae_image_size=args.imsize * args.imsize))
 
     dataset_to_process = join_ds.select(range(args.start_index, len(join_ds)))
     
@@ -50,6 +53,7 @@ def main():
         output_dict = foundation.base_pipe(foundation.INPUT_MODEL(
             image=[input_data["input_img"]],
             prompt=input_data["instruction"],
+            vae_image_override=args.imsize * args.imsize,
         ))
 
         torch.save(output_dict, save_base_dir/f"{idx:06d}.pt")
