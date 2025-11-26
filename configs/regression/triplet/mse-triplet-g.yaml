@@ -1,0 +1,9 @@
+wandb_run_name: "reg-mse-triplet-g"
+output_dir: "/data/checkpoints/reg-mse-triplet-g"
+
+train_loss_terms:
+  mse: 1.0
+  triplet: 1.0
+
+  triplet_margin: -0.1
+  triplet_min_abs_diff: 0.25

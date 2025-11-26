@@ -20,6 +20,8 @@ regression_gen_steps: 50
 editing_data_dir: "/data/CrispEdit"
 editing_total_per: 1
 
+gradient_checkpointing: true
+vae_tiling: false
 
 validation_loss_terms:
   mse: 1.0

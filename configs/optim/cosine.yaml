@@ -1,4 +1,6 @@
 
+name_suffix:
+  lr: cosine
 
 lr_scheduler: cosine
-lr_warmup_steps: 250
+lr_warmup_steps: 50

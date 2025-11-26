@@ -1,2 +1,5 @@
+name_suffix:
+  mse: 0.1
+
 train_loss_terms:
   mse: 0.1

@@ -118,6 +118,7 @@ def run_training(config_path: Path | str, update_config_paths: list[Path] | None
     config = QwenConfig(
         **config,
     )
+    config.add_suffix_to_names()
 
     # Data
     if config.training_type.is_style:

@@ -81,7 +81,17 @@ class QwenImageFoundation(WandModel):
         self.text_encoder.requires_grad_(False)
         self.text_encoder_device = None
         self.transformer.eval()
+        
         self.transformer.requires_grad_(False)
+        if self.config.gradient_checkpointing:
+            self.transformer.enable_gradient_checkpointing()
+        if self.config.vae_tiling:
+            self.vae.enable_tiling(
+                576,
+                576,
+                512,
+                512
+            )
 
         self.timestep_dist_utils = TimestepDistUtils(
             min_seq_len=self.scheduler.config.base_image_seq_len,
@@ -419,7 +429,7 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
             margin = loss_terms.triplet_margin
             triplet_min_abs_diff = loss_terms.triplet_min_abs_diff
             print(f"{triplet_min_abs_diff=}")
-            v_gt_neg_diff = (v_gt_1d - v_neg_1d).abs().mean(dim=2, keepdim=True)
+            v_gt_neg_diff = (v_gt_1d - v_neg_1d).abs().mean(dim=2)
             zero_weight = torch.zeros_like(v_gt_neg_diff) 
             v_weight = torch.where(v_gt_neg_diff > triplet_min_abs_diff, v_gt_neg_diff, zero_weight)
             ones = torch.ones_like(v_gt_neg_diff) 
@@ -431,12 +441,11 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
 
             diffv_gt_pred = (v_gt_1d - v_pred_1d).pow(2)
             diffv_neg_pred = (v_neg_1d - v_pred_1d).pow(2)
-            loss_unreduced = diffv_gt_pred - diffv_neg_pred
-            loss_weighted = (loss_unreduced * v_weight).sum(dim=2)
-            triplet_loss = F.relu(loss_weighted + margin).mean()
-            ones = torch.ones_like(loss_weighted)
-            zeros = torch.zeros_like(loss_weighted)
-            loss_nonzero_nums = torch.sum(torch.where((loss_weighted + margin)>0, ones, zeros))
+            per_tok_diff = (diffv_gt_pred - diffv_neg_pred).sum(dim=2)
+            triplet_loss = torch.mean(F.relu((per_tok_diff + margin) * v_weight))
+            ones = torch.ones_like(per_tok_diff)
+            zeros = torch.zeros_like(per_tok_diff)
+            loss_nonzero_nums = torch.sum(torch.where(((per_tok_diff + margin) * v_weight)>0, ones, zeros))
             wand_logger.log({
                 "loss_nonzero_nums": loss_nonzero_nums,
             }, commit=False)
@@ -447,8 +456,7 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
             texam(v_weight, "v_weight")
             texam(diffv_gt_pred, "diffv_gt_pred")
             texam(diffv_neg_pred, "diffv_neg_pred")
-            texam(loss_unreduced, "loss_unreduced")
-            texam(loss_weighted, "loss_weighted")
+            texam(per_tok_diff, "per_tok_diff")
 
 
         
@@ -467,7 +475,8 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
         
         if loss_accumulator.has_group("pixel"):
             x_0_pred = x_t_1d - t * v_pred_1d
-            pixel_values_x0_gt = self.latents_to_pil(x_0_1d, h=h_f16, w=w_f16, with_grad=True).detach()
+            with torch.no_grad():
+                pixel_values_x0_gt = self.latents_to_pil(x_0_1d, h=h_f16, w=w_f16, with_grad=True).detach()
             pixel_values_x0_pred = self.latents_to_pil(x_0_pred, h=h_f16, w=w_f16, with_grad=True)
 
             if loss_accumulator.has("pixel_lpips"):

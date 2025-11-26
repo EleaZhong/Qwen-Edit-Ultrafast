@@ -1,2 +1,5 @@
+name_suffix:
+  max_steps: 5000
+
 num_train_epochs: 1
 max_train_steps: 5000

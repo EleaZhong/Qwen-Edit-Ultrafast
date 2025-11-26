@@ -1,6 +1,6 @@
 import enum
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import torch
 from diffusers.image_processor import PipelineImageInput
@@ -79,6 +79,7 @@ class QwenConfig(ExperimentTrainerParameters):
     offload_text_encoder: bool = True
     quantize_text_encoder: bool = False
     quantize_transformer: bool = False
+    vae_tiling: bool = False
 
 
     train_loss_terms:QwenLossTerms = Field(default_factory=QwenLossTerms)
@@ -102,5 +103,19 @@ class QwenConfig(ExperimentTrainerParameters):
     editing_data_dir: str|Path|None = None
     editing_total_per: int = 1
     regression_base_pipe_steps: int = 8
+
+    name_suffix: dict[str,Any]|None = None
+
+    def add_suffix_to_names(self):
+        if self.name_suffix is None:
+            return
+        suffix_sum = ""
+        for suf_name,suf_val in self.name_suffix.items():
+            suffix_sum += "_" + suf_name
+            suf_val = str(suf_val)
+            suffix_sum += "_" + suf_val
+        self.run_name += suffix_sum
+        self.output_dir = self.output_dir.removesuffix("/") # in case
+        self.output_dir += suffix_sum
 
 
