@@ -134,7 +134,7 @@ class RegressionSource(Source):
     def __init__(self, data_dir, gen_steps=50, data_range:DataRange|None=None):
         if not isinstance(data_dir, Path):
             data_dir = Path(data_dir)
-        self.data_paths = list(data_dir.glob("*.pt"))
+        self.data_paths = list(sorted(data_dir.glob("*.pt")))
         if data_range is not None:
             indexes = parse_datarange(data_range, len(self.data_paths))
             self.data_paths = [self.data_paths[i] for i in indexes]
@@ -205,3 +205,4 @@ class EditingSource(Source):
         image = data["output_img"]
         text = data["instruction"]
         return text, image, reference
+
