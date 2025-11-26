@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--imsize", type=int, default=512)
     parser.add_argument("--indir", type=str, default="/data/CrispEdit")
     parser.add_argument("--outdir", type=str, default="/data/regression_output")
+    parser.add_argument("--steps", type=int, default=50)
     args = parser.parse_args()
 
     total_per = 10
@@ -54,6 +55,8 @@ def main():
             image=[input_data["input_img"]],
             prompt=input_data["instruction"],
             vae_image_override=args.imsize * args.imsize,
+            latent_size_override=args.imsize * args.imsize,
+            num_inference_steps=args.steps,
         ))
 
         torch.save(output_dict, save_base_dir/f"{idx:06d}.pt")

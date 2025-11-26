@@ -1,38 +1,30 @@
 #!/bin/bash
 
 
-# nohup python scripts/train.py configs/base.yaml --where modal \
-#     --update configs/regression/base.yaml \
-#     --update configs/regression/modal.yaml \
-#     --update configs/regression/mse.yaml \
-#     --update configs/compare/5k_steps.yaml \
-#     > logs/mse.log 2>&1 &
-
+nohup python scripts/train.py configs/base.yaml --where modal \
+    --update configs/regression/base.yaml \
+    --update configs/regression/modal.yaml \
+    --update configs/regression/dm/mse-dm-a.yaml \
+    --update configs/compare/5k_steps.yaml \
+    > logs/mse-dm-a.log 2>&1 &
 
 nohup python scripts/train.py configs/base.yaml --where modal \
     --update configs/regression/base.yaml \
     --update configs/regression/modal.yaml \
-    --update configs/regression/triplet/mse-triplet-b.yaml \
+    --update configs/regression/dm/mse-dm-b.yaml \
     --update configs/compare/5k_steps.yaml \
-    > logs/mse-triplet-b.log 2>&1 &
+    > logs/mse-dm-b.log 2>&1 &
 
 nohup python scripts/train.py configs/base.yaml --where modal \
     --update configs/regression/base.yaml \
     --update configs/regression/modal.yaml \
-    --update configs/regression/triplet/mse-triplet-c.yaml \
+    --update configs/regression/dm/mse-dm-c.yaml \
     --update configs/compare/5k_steps.yaml \
-    > logs/mse-triplet-c.log 2>&1 &
+    > logs/mse-dm-c.log 2>&1 &
 
 nohup python scripts/train.py configs/base.yaml --where modal \
     --update configs/regression/base.yaml \
     --update configs/regression/modal.yaml \
-    --update configs/regression/triplet/mse-triplet-d.yaml \
+    --update configs/regression/dm/mse-dm-d.yaml \
     --update configs/compare/5k_steps.yaml \
-    > logs/mse-triplet-d.log 2>&1 &
-
-nohup python scripts/train.py configs/base.yaml --where modal \
-    --update configs/regression/base.yaml \
-    --update configs/regression/modal.yaml \
-    --update configs/regression/triplet/mse-triplet-e.yaml \
-    --update configs/compare/5k_steps.yaml \
-    > logs/mse-triplet-e.log 2>&1 &
+    > logs/mse-dm-d.log 2>&1 &

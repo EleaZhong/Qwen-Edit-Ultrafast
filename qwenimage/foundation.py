@@ -395,13 +395,14 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
         split = batch["split"]
         step = batch["step"]
         if split == "train":
-            loss_terms = self.config.train_loss_terms.model_dump()
+            loss_terms = self.config.train_loss_terms
         elif split == "validation":
-            loss_terms = self.config.validation_loss_terms.model_dump()
+            loss_terms = self.config.validation_loss_terms
         loss_accumulator = LossAccumulator(
-            terms=loss_terms,
+            terms=loss_terms.model_dump(),
             step=step,
             split=split,
+            term_groups={"pixel":loss_terms.pixel_terms}
         )
 
         if loss_accumulator.has("mse"):
@@ -414,30 +415,41 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
             loss_accumulator.accum("mse", mse_loss)
         
         if loss_accumulator.has("triplet"):
-            # eps = 1e-6
-            margin = loss_terms["triplet_margin"]
-            # v_span = (v_gt_1d - v_neg_1d).pow(2).sum(dim=(-2,-1))
+            # 1d, B,L,C
+            margin = loss_terms.triplet_margin
+            triplet_min_abs_diff = loss_terms.triplet_min_abs_diff
+            print(f"{triplet_min_abs_diff=}")
+            v_gt_neg_diff = (v_gt_1d - v_neg_1d).abs().mean(dim=2, keepdim=True)
+            zero_weight = torch.zeros_like(v_gt_neg_diff) 
+            v_weight = torch.where(v_gt_neg_diff > triplet_min_abs_diff, v_gt_neg_diff, zero_weight)
+            ones = torch.ones_like(v_gt_neg_diff) 
+            filtered_nums = torch.sum(torch.where(v_gt_neg_diff > triplet_min_abs_diff, ones, zero_weight))
+            wand_logger.log({
+                "filtered_nums": filtered_nums,
+            }, commit=False)
 
-            # triplet_weight = (v_gt_1d - v_neg_1d).pow(2).mean(dim=(-2,-1))
 
-            diffv_gt_pred = (v_gt_1d - v_pred_1d).pow(2).sum(dim=(-2,-1))
-            diffv_neg_pred = (v_neg_1d - v_pred_1d).pow(2).sum(dim=(-2,-1))
-            # diffv_gt_pred_reg = diffv_gt_pred # / (v_span + eps)
-            # diffv_neg_pred_reg = diffv_neg_pred # / (v_span + eps)
-            
-            # texam(v_span, name="v_span")
-            # texam(triplet_weight, name="triplet_weight")
-            texam(diffv_gt_pred, name="diffv_gt_pred")
-            texam(diffv_neg_pred, name="diffv_neg_pred")
-            # texam(diffv_gt_pred_reg, name="diffv_gt_pred_reg")
-            # texam(diffv_neg_pred_reg, name="diffv_neg_pred_reg")
-            # texam(diffv_gt_pred_reg - diffv_neg_pred_reg, name="diffv_gt_pred_reg - diffv_neg_pred_reg")
-            
-            triplet_loss = F.relu(diffv_gt_pred - diffv_neg_pred + margin).mean()
-            # 
-            # triplet_loss = F.relu(diffv_gt_pred_reg - diffv_neg_pred_reg + margin).mean()
-            # triplet_loss = torch.mean(triplet_loss_batched * triplet_weight)
+            diffv_gt_pred = (v_gt_1d - v_pred_1d).pow(2)
+            diffv_neg_pred = (v_neg_1d - v_pred_1d).pow(2)
+            loss_unreduced = diffv_gt_pred - diffv_neg_pred
+            loss_weighted = (loss_unreduced * v_weight).sum(dim=2)
+            triplet_loss = F.relu(loss_weighted + margin).mean()
+            ones = torch.ones_like(loss_weighted)
+            zeros = torch.zeros_like(loss_weighted)
+            loss_nonzero_nums = torch.sum(torch.where((loss_weighted + margin)>0, ones, zeros))
+            wand_logger.log({
+                "loss_nonzero_nums": loss_nonzero_nums,
+            }, commit=False)
+
             loss_accumulator.accum("triplet", triplet_loss)
+
+            texam(v_gt_neg_diff, "v_gt_neg_diff")
+            texam(v_weight, "v_weight")
+            texam(diffv_gt_pred, "diffv_gt_pred")
+            texam(diffv_neg_pred, "diffv_neg_pred")
+            texam(loss_unreduced, "loss_unreduced")
+            texam(loss_weighted, "loss_weighted")
+
 
         
         if loss_accumulator.has("negative_mse"):
@@ -453,7 +465,7 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
         if loss_accumulator.has("negative_exponential"):
             raise NotImplementedError()
         
-        if loss_accumulator.has("pixel_lpips") or loss_accumulator.has("pixel_mse"):
+        if loss_accumulator.has_group("pixel"):
             x_0_pred = x_t_1d - t * v_pred_1d
             pixel_values_x0_gt = self.latents_to_pil(x_0_1d, h=h_f16, w=w_f16, with_grad=True).detach()
             pixel_values_x0_pred = self.latents_to_pil(x_0_pred, h=h_f16, w=w_f16, with_grad=True)
@@ -468,6 +480,14 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
             if loss_accumulator.has("pixel_mse"):
                 pixel_mse_loss = F.mse_loss(pixel_values_x0_pred, pixel_values_x0_gt, reduction="mean")
                 loss_accumulator.accum("pixel_mse", pixel_mse_loss)
+            
+            if loss_accumulator.has("pixel_triplet"):
+                raise NotImplementedError()
+                loss_accumulator.accum("pixel_triplet", pixel_triplet_loss)
+
+            if loss_accumulator.has("pixel_distribution_matching"):
+                raise NotImplementedError()    
+                loss_accumulator.accum("pixel_distribution_matching", pixel_distribution_matching_loss)
         
         if loss_accumulator.has("adversarial"):
             raise NotImplementedError()
@@ -492,7 +512,7 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
                 v_gt_1d,
                 v_neg_1d,
                 v_pred_1d,
-                visualize_velocities=True,
+                visualize_velocities=False,
             )
         
         return loss
@@ -513,7 +533,7 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
         v_gt_1d,
         v_neg_1d,
         v_pred_1d,
-        visualize_velocities=True,
+        visualize_velocities=False,
     ):  
         t_float = t.float().cpu().item()
         x_0_pred = x_t_1d - t * v_pred_1d
@@ -526,12 +546,33 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
             "x_0_pred": self.latents_to_pil(x_0_pred, h=h_f16, w=w_f16),
             "x_0_neg": self.latents_to_pil(x_0_neg, h=h_f16, w=w_f16),
         }
-        if visualize_velocities:
+        if visualize_velocities: # naively visualizing through vae (works with flux)
             log_pils.update({
                 "v_gt_1d": self.latents_to_pil(v_gt_1d, h=h_f16, w=w_f16),
                 "v_pred_1d": self.latents_to_pil(v_pred_1d, h=h_f16, w=w_f16),
                 "v_neg_1d": self.latents_to_pil(v_neg_1d, h=h_f16, w=w_f16),
             })
+        
+        # create gt-neg difference maps
+        v_pred_2d = self.unpack_latents(v_pred_1d, h_f16, w_f16)
+        v_gt_2d = self.unpack_latents(v_gt_1d, h_f16, w_f16)
+        v_neg_2d = self.unpack_latents(v_neg_1d, h_f16, w_f16)
+        gt_neg_diff_map_2d = (v_gt_2d - v_neg_2d).pow(2).mean(dim=1, keepdim=True)
+        gt_pred_diff_map_2d = (v_gt_2d - v_pred_2d).pow(2).mean(dim=1, keepdim=True)
+        neg_pred_diff_map_2d = (v_neg_2d - v_pred_2d).pow(2).mean(dim=1, keepdim=True)
+        diff_max = torch.max(torch.stack([gt_neg_diff_map_2d, gt_pred_diff_map_2d, neg_pred_diff_map_2d]))
+        diff_min = torch.min(torch.stack([gt_neg_diff_map_2d, gt_pred_diff_map_2d, neg_pred_diff_map_2d]))
+        print(f"{diff_min}, {diff_max}")
+        # norms to 0-1
+        diff_span = diff_max - diff_min
+        gt_neg_diff_map_2d = (gt_neg_diff_map_2d - diff_min) / diff_span
+        gt_pred_diff_map_2d = (gt_pred_diff_map_2d - diff_min) / diff_span
+        neg_pred_diff_map_2d = (neg_pred_diff_map_2d - diff_min) / diff_span
+        log_pils.update({
+            "gt-neg":gt_neg_diff_map_2d.float().cpu(),
+            "gt-pred":gt_pred_diff_map_2d.float().cpu(),
+            "neg-pred":neg_pred_diff_map_2d.float().cpu(),
+        })
         
         wand_logger.log({
             "train_images": log_pils,
@@ -539,5 +580,15 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
 
         
     def base_pipe(self, inputs: QwenInputs) -> list[Image]:
-        inputs.num_inference_steps = self.config.regression_base_pipe_steps  # override
+        # config overrides
+        inputs.num_inference_steps = self.config.regression_base_pipe_steps
+        inputs.latent_size_override = self.config.vae_image_size
+        inputs.vae_image_override = self.config.vae_image_size
+        image = inputs.image[0]
+        w,h = image.size
+        h_r, w_r = calculate_dimensions(self.config.vae_image_size, h/w)
+        image = TF.resize(image, (h_r, w_r))
+        inputs.image = [image]
+        inputs.height = h_r
+        inputs.width = w_r
         return super().base_pipe(inputs)

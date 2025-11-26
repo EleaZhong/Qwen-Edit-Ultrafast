@@ -70,6 +70,7 @@ modalapp.image = (
         "/root/.cache/torch/hub/checkpoints": modal.Volume.from_name("torch_hub_checkpoints", create_if_missing=True),
 
         "/root/.cache/huggingface/hub":  modal.Volume.from_name("hf_cache", create_if_missing=True),
+        "/root/.cache/huggingface/datasets":  modal.Volume.from_name("hf_cache_datasets", create_if_missing=True),
 
         "/data/regression_data": modal.Volume.from_name("regression_data"),
         "/data/edit_data": modal.Volume.from_name("edit_data"),

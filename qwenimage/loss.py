@@ -12,9 +12,11 @@ class LossAccumulator:
         terms: dict[str, int|float|dict],
         step: int|None=None,
         split: str|None=None,
+        term_groups: dict[str, tuple[str, ...]]|None = None,
     ):
         self.terms = terms
         self.step = step
+        self.term_groups = term_groups
         if split is not None:
             self.split = split
             self.prefix = f"{self.split}_"
@@ -55,7 +57,13 @@ class LossAccumulator:
         
         warnings.warn(f"Unknown spec type {spec}; treat as disabled")
         return 0.0
-    
+
+    def has_group(self, name: str):
+        if name not in self.term_groups:
+            return False
+        all_group_terms = self.term_groups[name]
+        return any([self.resolve_weight(tn) > 0 for tn in all_group_terms])
+
     def has(self, name: str) -> bool:
         return self.resolve_weight(name) > 0
 

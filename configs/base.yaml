@@ -11,12 +11,12 @@ gradient_accumulation_steps: 1
 train_batch_size: 1
 optim: "adamw"
 learning_rate: 1.0e-4
-num_workers: 4
+num_workers: 8
 resume_from_checkpoint: null
 log_model_steps: null
 preprocessing_epoch_len: 64
 preprocessing_epoch_repetitions: 1
-
+lora_rank: 16
 
 # Logging
 record_training: true
@@ -33,5 +33,8 @@ sample_steps:
   every: 500
 global_step: 0
 save_steps: 1000
-log_batch_steps: 500
+log_batch_steps:
+  "on": [0,1,100]
+  every: 500
 seed: 67
+

@@ -5,7 +5,4 @@ train_loss_terms:
   mse: 1.0
   negative_mse: 0.1
 
-validation_loss_terms:
-  mse: 1.0
-  negative_mse: 0.1
  

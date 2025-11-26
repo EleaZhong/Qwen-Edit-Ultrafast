@@ -4,7 +4,3 @@ output_dir: "/data/checkpoints/reg-mse-pixel-lpips"
 train_loss_terms:
   mse: 1.0
   pixel_lpips: 1.0
-
-validation_loss_terms:
-  mse: 1.0
-  pixel_lpips: 1.0

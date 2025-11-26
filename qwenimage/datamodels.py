@@ -50,12 +50,20 @@ class QwenLossTerms(BaseModel):
     triplet: LossTermSpecType = 0.0
     negative_mse: LossTermSpecType = 0.0
     distribution_matching: LossTermSpecType = 0.0
-    negative_exponential: LossTermSpecType = 0.0
+    pixel_triplet: LossTermSpecType = 0.0
     pixel_lpips: LossTermSpecType = 0.0
     pixel_mse: LossTermSpecType = 0.0
+    pixel_distribution_matching: LossTermSpecType = 0.0
     adversarial: LossTermSpecType = 0.0
+    teacher: LossTermSpecType = 0.0
 
-    triplet_margin: float = 0.2
+    triplet_margin: float = 0.0
+    triplet_min_abs_diff: float = 0.0
+    teacher_steps: int = 4
+
+    @property
+    def pixel_terms(self) -> bool:
+        return ("pixel_lpips", "pixel_mse", "pixel_triplet", "pixel_distribution_matching",)
 
 class QwenConfig(ExperimentTrainerParameters):
     load_multi_view_lora: bool = False

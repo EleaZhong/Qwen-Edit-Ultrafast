@@ -19,3 +19,9 @@ regression_data_dir: "/data/regression_output"
 regression_gen_steps: 50
 editing_data_dir: "/data/CrispEdit"
 editing_total_per: 1
+
+
+validation_loss_terms:
+  mse: 1.0
+  pixel_mse: 1.0
+  pixel_lpips: 1.0

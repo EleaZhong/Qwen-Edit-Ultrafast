@@ -1,9 +1,0 @@
-
-
-
-validation_loss_terms:
-  mse: 1.0
-  pixel_mse: 1.0
-  pixel_lpips: 1.0
-  
- 
