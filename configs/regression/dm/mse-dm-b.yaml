@@ -1,0 +1,6 @@
+wandb_run_name: "reg-mse-dm-b"
+output_dir: "/data/checkpoints/reg-mse-dm-b"
+
+train_loss_terms:
+  mse: 1.0
+  distribution_matching: 0.25
