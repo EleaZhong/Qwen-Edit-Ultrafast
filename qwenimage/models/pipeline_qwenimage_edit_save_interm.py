@@ -36,6 +36,7 @@ from diffusers.pipelines.qwenimage.pipeline_output import QwenImagePipelineOutpu
 
 from qwenimage.debug import ctimed, ftimed, texam
 from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
+from qwenimage.sampling import TimestepDistUtils
 
 
 if is_torch_xla_available():
@@ -793,28 +794,14 @@ class QwenImageEditSaveIntermPipeline(DiffusionPipeline, QwenImageLoraLoaderMixi
             ] * batch_size
 
             # 5. Prepare timesteps
-            print(f"{num_inference_steps=}")
-            sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps) if sigmas is None else sigmas
-            image_seq_len = latents.shape[1]
-            print(f"{image_seq_len=}")
-            mu = calculate_shift(
-                image_seq_len,
-                self.scheduler.config.get("base_image_seq_len", 256),
-                self.scheduler.config.get("max_image_seq_len", 4096),
-                self.scheduler.config.get("base_shift", 0.5),
-                self.scheduler.config.get("max_shift", 1.15),
+            t_utils = TimestepDistUtils(
+                min_seq_len=self.scheduler.config.get("base_image_seq_len", 256),
+                max_seq_len=self.scheduler.config.get("max_image_seq_len", 4096),
+                min_mu=self.scheduler.config.get("base_shift", 0.5),
+                max_mu=self.scheduler.config.get("max_shift", 1.15),
             )
-            print(f"{mu=}")
-            timesteps, num_inference_steps = retrieve_timesteps(
-                self.scheduler,
-                num_inference_steps,
-                device,
-                sigmas=sigmas,
-                mu=mu,
-            )
-            print(f"{timesteps=}")
-            num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
-            self._num_timesteps = len(timesteps)
+            ts = t_utils.get_inference_t(num_inference_steps, seq_len=t_utils.get_seq_len(latents)).to(device)
+            print(f"ts={ts}")
 
             # handle guidance
             if self.transformer.config.guidance_embeds and guidance_scale is None:
@@ -855,25 +842,26 @@ class QwenImageEditSaveIntermPipeline(DiffusionPipeline, QwenImageLoraLoaderMixi
             # 6. Denoising loop
             self.scheduler.set_begin_index(0)
             with self.progress_bar(total=num_inference_steps) as progress_bar:
-                for i, t in enumerate(timesteps):
+                for i in range(len(ts)-1):
+                    t = ts[i]
                     with ctimed(f"loop {i}"):
                         if self.interrupt:
                             continue
 
-                        self._current_timestep = t
+                        # self._current_timestep = t
 
                         latent_model_input = latents
                         if image_latents is not None:
                             latent_model_input = torch.cat([latents, image_latents], dim=1)
 
                         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                        timestep = t.expand(latents.shape[0]).to(latents.dtype)
-                        output_dict[f"t_{i}"] = (timestep / 1000).clone().cpu()
+                        in_t = t.expand(latents.shape[0]).to(latents.dtype)
+                        output_dict[f"t_{i}"] = in_t.clone().cpu()
                         output_dict[f"latents_{i}_start"] = latents.clone().cpu()
                         with self.transformer.cache_context("cond"):
                             noise_pred = self.transformer(
                                 hidden_states=latent_model_input,
-                                timestep=timestep / 1000,
+                                timestep=in_t,
                                 guidance=guidance, 
                                 encoder_hidden_states_mask=prompt_embeds_mask,
                                 encoder_hidden_states=prompt_embeds,
@@ -890,7 +878,7 @@ class QwenImageEditSaveIntermPipeline(DiffusionPipeline, QwenImageLoraLoaderMixi
                             with self.transformer.cache_context("uncond"):
                                 neg_noise_pred = self.transformer(
                                     hidden_states=latent_model_input,
-                                    timestep=timestep / 1000,
+                                    timestep=in_t,
                                     guidance=guidance,
                                     encoder_hidden_states_mask=negative_prompt_embeds_mask,
                                     encoder_hidden_states=negative_prompt_embeds,
@@ -907,7 +895,7 @@ class QwenImageEditSaveIntermPipeline(DiffusionPipeline, QwenImageLoraLoaderMixi
 
                         # compute the previous noisy sample x_t -> x_t-1
                         latents_dtype = latents.dtype
-                        latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+                        latents = t_utils.inference_ode_step(noise_pred, latents, i, ts)
 
                         # output_dict[f"latents_{i}"] = latents.clone().cpu()
 
@@ -926,8 +914,7 @@ class QwenImageEditSaveIntermPipeline(DiffusionPipeline, QwenImageLoraLoaderMixi
                             prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
 
                         # call the callback, if provided
-                        if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
-                            progress_bar.update()
+                        progress_bar.update()
 
                         if XLA_AVAILABLE:
                             xm.mark_step()

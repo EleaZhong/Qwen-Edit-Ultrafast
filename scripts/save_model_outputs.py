@@ -14,10 +14,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--end-index", type=int, default=100)
-    parser.add_argument("--imsize", type=int, default=512)
+    parser.add_argument("--imsize", type=int, default=1024)
     parser.add_argument("--indir", type=str, default="/data/CrispEdit")
     parser.add_argument("--outdir", type=str, default="/data/model_output")
-    parser.add_argument("--steps", type=int, default=50)
+    parser.add_argument("--steps", type=int, default=2)
     parser.add_argument("--checkpoint", type=str)
     parser.add_argument("--lora-rank", type=int)
     args = parser.parse_args()
@@ -53,8 +53,11 @@ def main():
     finetuner = QwenLoraFinetuner(foundation, foundation.config)
     finetuner.load(args.checkpoint, lora_rank=args.lora_rank)
 
-    dataset_to_process = join_ds.select(range(args.start_index, len(join_ds)))
-    
+    dataset_to_process = join_ds.select(range(args.start_index, args.end_index))
+
+    # foundation.scheduler.config["base_shift"] = 2.0
+    # foundation.scheduler.config["max_shift"] = 2.0
+
     for idx, input_data in enumerate(tqdm.tqdm(dataset_to_process), start=args.start_index):
 
         output_dict = foundation.base_pipe(foundation.INPUT_MODEL(
