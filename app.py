@@ -93,6 +93,8 @@ def optim_pipe():
         }
     )
 
+optim_pipe()
+
 MAX_SEED = np.iinfo(np.int32).max
 
 
@@ -161,7 +163,7 @@ with gr.Blocks(theme=gr.themes.Citrus()) as demo:
             image = gr.Image(label="Input Image", type="pil")
             prompt = gr.Textbox(label="Prompt", placeholder="Prompt", lines=2)
 
-            num_runs = gr.Slider(label="Run Consecutively", minimum=0, maximum=100, step=1, value=16)
+            num_runs = gr.Slider(label="Run Consecutively", minimum=0, maximum=100, step=1, value=4)
 
             run_btn = gr.Button("Generate", variant="primary")
 
