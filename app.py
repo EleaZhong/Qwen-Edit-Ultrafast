@@ -15,14 +15,7 @@ import subprocess
 GIT_TOKEN = os.environ.get("GIT_TOKEN")
 import subprocess
 
-cmd = [
-    "pip",
-    "install",
-    "git+https://eleazhong:${GIT_TOKEN}@github.com/wand-ai/wand-ml",
-]
-
-# If GIT_TOKEN is a Python variable, build the string in Python instead:
-# cmd = f"pip install git+https://eleazhong:{GIT_TOKEN}@github.com/wand-ai/wand-ml"
+cmd = f"pip install git+https://eleazhong:{GIT_TOKEN}@github.com/wand-ai/wand-ml"
 
 proc = subprocess.Popen(
     cmd,
@@ -39,7 +32,8 @@ proc.wait()
 print("Exit code:", proc.returncode)
 
 from qwenimage.debug import ctimed
-from qwenimage.foundation import QwenImageEditPlusPipeline, QwenImageTransformer2DModel
+from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
+from qwenimage.models.transformer_qwenimage import QwenImageTransformer2DModel
 
 # --- Model Loading ---
 
