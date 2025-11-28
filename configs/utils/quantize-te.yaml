@@ -1,0 +1,4 @@
+name_suffix:
+  qte: true
+
+quantize_text_encoder: true

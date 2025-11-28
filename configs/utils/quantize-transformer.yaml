@@ -1,0 +1,4 @@
+name_suffix:
+  qtf: true
+
+quantize_transformer: true
