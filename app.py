@@ -11,53 +11,44 @@ from PIL import Image
 import gradio as gr
 import spaces
 
+from qwenimage.datamodels import QwenConfig
 from qwenimage.debug import ctimed, ftimed
 from qwenimage.experiments.experiments_qwen import ExperimentRegistry
+from qwenimage.finetuner import QwenLoraFinetuner
+from qwenimage.foundation import QwenImageFoundation
 from qwenimage.prompt import build_camera_prompt
 
 # --- Model Loading ---
-dtype = torch.bfloat16
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
-print(f"main cuda: {torch.cuda.is_available()=}")
+foundation = QwenImageFoundation(QwenConfig(
+    vae_image_size=1024 * 1024,
+    regression_base_pipe_steps=4,
+))
+finetuner = QwenLoraFinetuner(foundation, foundation.config)
+finetuner.load("checkpoints/reg-mse-pixel-lpips_005000", lora_rank=32)
 
-exp = ExperimentRegistry.get("qwen_lightning_fa3_aot_int8_fuse_downsize512")()
-exp.load()
-
-
-@spaces.GPU(duration=1500)
-def optim_pipe():
-    print(f"func cuda: {torch.cuda.is_available()=}")
-    exp.optimize()
-
-optim_pipe()
 
 
 MAX_SEED = np.iinfo(np.int32).max
 
 
 @spaces.GPU
-def infer_camera_edit(
+def run_pipe(
     image,
-    rotate_deg,
-    move_forward,
-    vertical_tilt,
-    wideangle,
+    prompt,
     seed,
     randomize_seed,
-    true_guidance_scale,
     num_inference_steps,
-    height,
-    width,
+    shift,
     prev_output = None,
     progress=gr.Progress(track_tqdm=True)
 ):
     with ctimed("pre pipe"):
-        prompt = build_camera_prompt(rotate_deg, move_forward, vertical_tilt, wideangle)
-        print(f"Generated Prompt: {prompt}")
 
         if randomize_seed:
             seed = random.randint(0, MAX_SEED)
+        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         generator = torch.Generator(device=device).manual_seed(seed)
 
         # Choose input image (prefer uploaded, else last output)
@@ -75,150 +66,64 @@ def infer_camera_edit(
         
         print(f"{len(pil_images)=}")
 
-        if prompt == "no camera movement":
-            return image, seed, prompt
-    result = exp.run_once(
+    finetuner.enable()
+    foundation.scheduler.config["base_shift"] = shift
+    foundation.scheduler.config["max_shift"] = shift
+
+    result = foundation.base_pipe(foundation.INPUT_MODEL(
         image=pil_images,
         prompt=prompt,
-        height=height if height != 0 else None,
-        width=width if width != 0 else None,
         num_inference_steps=num_inference_steps,
         generator=generator,
-        true_cfg_scale=true_guidance_scale,
-        num_images_per_prompt=1,
-    )
+    ))[0]
 
-    return result, seed, prompt
+    return result, seed
 
 
 # --- UI ---
-css = '''#col-container { max-width: 800px; margin: 0 auto; }
-.dark .progress-text{color: white !important}
-#examples{max-width: 800px; margin: 0 auto; }'''
-
-def reset_all():
-    return [0, 0, 0, 0, False]
-
-def end_reset():
-    return False
-
-def update_dimensions_on_upload(image):
-    if image is None:
-        return 1024, 1024
-    
-    original_width, original_height = image.size
-    
-    if original_width > original_height:
-        new_width = 1024
-        aspect_ratio = original_height / original_width
-        new_height = int(new_width * aspect_ratio)
-    else:
-        new_height = 1024
-        aspect_ratio = original_width / original_height
-        new_width = int(new_height * aspect_ratio)
-        
-    # Ensure dimensions are multiples of 8
-    new_width = (new_width // 8) * 8
-    new_height = (new_height // 8) * 8
-    
-    return new_width, new_height
 
 
-with gr.Blocks(theme=gr.themes.Citrus(), css=css) as demo:
-    with gr.Column(elem_id="col-container"):
-        gr.Markdown("## 🎬 Qwen Image Edit — Camera Angle Control")
-        gr.Markdown("""
-            Qwen Image Edit 2509 for Camera Control ✨ 
-            Using [dx8152's Qwen-Edit-2509-Multiple-angles LoRA](https://huggingface.co/dx8152/Qwen-Edit-2509-Multiple-angles) and [Phr00t/Qwen-Image-Edit-Rapid-AIO](https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/tree/main) for 4-step inference 💨
-            """
-        )
+with gr.Blocks(theme=gr.themes.Citrus()) as demo:
 
-        with gr.Row():
-            with gr.Column():
-                image = gr.Image(label="Input Image", type="pil")
-                prev_output = gr.Image(value=None, visible=False)
-                is_reset = gr.Checkbox(value=False, visible=False)
+    gr.Markdown("Qwen Image Demo")
 
-                with gr.Tab("Camera Controls"):
-                    rotate_deg = gr.Slider(label="Rotate Right-Left (degrees °)", minimum=-90, maximum=90, step=45, value=0)
-                    move_forward = gr.Slider(label="Move Forward → Close-Up", minimum=0, maximum=10, step=5, value=0)
-                    vertical_tilt = gr.Slider(label="Vertical Angle (Bird ↔ Worm)", minimum=-1, maximum=1, step=1, value=0)
-                    wideangle = gr.Checkbox(label="Wide-Angle Lens", value=False)
-                with gr.Row():
-                        reset_btn = gr.Button("Reset")
-                        run_btn = gr.Button("Generate", variant="primary")
+    with gr.Row():
+        with gr.Column():
+            image = gr.Image(label="Input Image", type="pil")
+            prev_output = gr.Image(value=None, visible=False)
+            is_reset = gr.Checkbox(value=False, visible=False)
+            prompt = gr.Textbox(label="Prompt", placeholder="Prompt", lines=2)
 
-                with gr.Accordion("Advanced Settings", open=False):
-                    seed = gr.Slider(label="Seed", minimum=0, maximum=MAX_SEED, step=1, value=0)
-                    randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
-                    true_guidance_scale = gr.Slider(label="True Guidance Scale", minimum=1.0, maximum=10.0, step=0.1, value=1.0)
-                    num_inference_steps = gr.Slider(label="Inference Steps", minimum=1, maximum=40, step=1, value=2)
-                    height = gr.Slider(label="Height", minimum=256, maximum=2048, step=8, value=1024)
-                    width = gr.Slider(label="Width", minimum=256, maximum=2048, step=8, value=1024)
 
-            with gr.Column():
-                result = gr.Image(label="Output Image", interactive=False)
-                prompt_preview = gr.Textbox(label="Processed Prompt", interactive=False)
+            run_btn = gr.Button("Generate", variant="primary")
+
+            with gr.Accordion("Advanced Settings", open=False):
+                seed = gr.Slider(label="Seed", minimum=0, maximum=MAX_SEED, step=1, value=0)
+                randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
+                num_inference_steps = gr.Slider(label="Inference Steps", minimum=1, maximum=40, step=1, value=2)
+                shift = gr.Slider(label="Timestep Shift", minimum=0.0, maximum=4.0, step=0.1, value=2.0)
+
+        with gr.Column():
+            result = gr.Image(label="Output Image", interactive=False)
                     
     inputs = [
-        image,rotate_deg, move_forward,
-        vertical_tilt, wideangle,
-        seed, randomize_seed, true_guidance_scale, num_inference_steps, height, width, prev_output
+        image,
+        prompt,
+        seed, 
+        randomize_seed,
+        num_inference_steps,
+        shift,
+        prev_output,
     ]
-    outputs = [result, seed, prompt_preview]
+    outputs = [result, seed]
 
-    # Reset behavior
-    reset_btn.click(
-        fn=reset_all,
-        inputs=None,
-        outputs=[rotate_deg, move_forward, vertical_tilt, wideangle, is_reset],
-        queue=False
-    ).then(fn=end_reset, inputs=None, outputs=[is_reset], queue=False)
     
     run_event = run_btn.click(
-        fn=infer_camera_edit, 
+        fn=run_pipe, 
         inputs=inputs, 
         outputs=outputs
     )
-    
-    # Image upload triggers dimension update and control reset
-    image.upload(
-        fn=update_dimensions_on_upload,
-        inputs=[image],
-        outputs=[width, height]
-    ).then(
-        fn=reset_all,
-        inputs=None,
-        outputs=[rotate_deg, move_forward, vertical_tilt, wideangle, is_reset],
-        queue=False
-    ).then(
-        fn=end_reset, 
-        inputs=None, 
-        outputs=[is_reset], 
-        queue=False
-    )
 
-
-    # Live updates
-    @ftimed
-    def maybe_infer(is_reset, progress=gr.Progress(track_tqdm=True), *args):
-        if is_reset:
-            return gr.update(), gr.update(), gr.update(), gr.update()
-        else:
-            return infer_camera_edit(*args)
-
-    control_inputs = [
-        image, rotate_deg, move_forward,
-        vertical_tilt, wideangle,
-        seed, randomize_seed, true_guidance_scale, num_inference_steps, height, width, prev_output
-    ]
-    control_inputs_with_flag = [is_reset] + control_inputs
-
-    for control in [rotate_deg, move_forward, vertical_tilt]:
-        control.release(fn=maybe_infer, inputs=control_inputs_with_flag, outputs=outputs)
-    
-    wideangle.input(fn=maybe_infer, inputs=control_inputs_with_flag, outputs=outputs)
-    
     run_event.then(lambda img, *_: img, inputs=[result], outputs=[prev_output])
 
 demo.launch()

@@ -327,26 +327,16 @@ class QwenImageFoundation(WandModel):
     def base_pipe(self, inputs: QwenInputs) -> list[Image]:
         print(inputs)
         self.offload_text_encoder("cuda")
-        image = inputs.image[0]
-        w,h = image.size
-        h_r, w_r = calculate_dimensions(self.config.vae_image_size, h/w)
-        image = TF.resize(image, (h_r, w_r))
-        inputs.image = [image]
+        if inputs.vae_image_override is None:
+            inputs.vae_image_override = self.config.vae_image_size
+        if inputs.latent_size_override is None:
+            inputs.latent_size_override = self.config.vae_image_size
         return self.pipe(**inputs.model_dump()).images
     
 
 
 class QwenImageFoundationSaveInterm(QwenImageFoundation):
     PIPELINE = QwenImageEditSaveIntermPipeline
-
-    def base_pipe(self, inputs: QwenInputs) -> list[Image]:
-        print(inputs)
-        image = inputs.image[0]
-        w,h = image.size
-        h_r, w_r = calculate_dimensions(self.config.vae_image_size, h/w)
-        image = TF.resize(image, (h_r, w_r))
-        inputs.image = [image]
-        return self.pipe(**inputs.model_dump())
     
 
 class QwenImageRegressionFoundation(QwenImageFoundation):
@@ -589,15 +579,6 @@ class QwenImageRegressionFoundation(QwenImageFoundation):
 
         
     def base_pipe(self, inputs: QwenInputs) -> list[Image]:
-        # config overrides
         inputs.num_inference_steps = self.config.regression_base_pipe_steps
-        inputs.latent_size_override = self.config.vae_image_size
-        inputs.vae_image_override = self.config.vae_image_size
-        image = inputs.image[0]
-        w,h = image.size
-        h_r, w_r = calculate_dimensions(self.config.vae_image_size, h/w)
-        image = TF.resize(image, (h_r, w_r))
-        inputs.image = [image]
-        inputs.height = h_r
-        inputs.width = w_r
         return super().base_pipe(inputs)
+       

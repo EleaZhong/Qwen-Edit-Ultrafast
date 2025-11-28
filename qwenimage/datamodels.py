@@ -21,8 +21,8 @@ class QwenInputs(BaseModel):
     num_inference_steps: int = 50
     generator: torch.Generator | list[torch.Generator] | None = None
     max_sequence_length: int = 512
-    vae_image_override: int | None = 512 * 512
-    latent_size_override: int | None = 512 * 512
+    vae_image_override: int | None = None
+    latent_size_override: int | None = None
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -75,7 +75,7 @@ class QwenConfig(ExperimentTrainerParameters):
     static_mu: float | None = None
     loss_weight_dist: str | None = None # "scaled_clipped_gaussian", "logit-normal"
 
-    vae_image_size: int = 512 * 512
+    vae_image_size: int = 1024 * 1024
     offload_text_encoder: bool = True
     quantize_text_encoder: bool = False
     quantize_transformer: bool = False
