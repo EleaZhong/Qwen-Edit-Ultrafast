@@ -13,25 +13,64 @@ import spaces
 
 import subprocess
 GIT_TOKEN = os.environ.get("GIT_TOKEN")
-subprocess.run(f"pip install git+https://eleazhong:{GIT_TOKEN}@github.com/wand-ai/wand-ml", shell=True)
+import subprocess
 
-from qwenimage.datamodels import QwenConfig
-from qwenimage.debug import ctimed, ftimed
-from qwenimage.experiments.experiments_qwen import ExperimentRegistry
-from qwenimage.finetuner import QwenLoraFinetuner
-from qwenimage.foundation import QwenImageFoundation
-from qwenimage.prompt import build_camera_prompt
+cmd = [
+    "pip",
+    "install",
+    "git+https://eleazhong:${GIT_TOKEN}@github.com/wand-ai/wand-ml",
+]
+
+# If GIT_TOKEN is a Python variable, build the string in Python instead:
+# cmd = f"pip install git+https://eleazhong:{GIT_TOKEN}@github.com/wand-ai/wand-ml"
+
+proc = subprocess.Popen(
+    cmd,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,       # or encoding="utf-8" on older Python
+    bufsize=1,
+)
+
+for line in proc.stdout:
+    print(line, end="")   # already has newline
+
+proc.wait()
+print("Exit code:", proc.returncode)
+
+from qwenimage.debug import ctimed
+from qwenimage.foundation import QwenImageEditPlusPipeline, QwenImageTransformer2DModel
 
 # --- Model Loading ---
 
-foundation = QwenImageFoundation(QwenConfig(
-    vae_image_size=1024 * 1024,
-    regression_base_pipe_steps=4,
-))
-finetuner = QwenLoraFinetuner(foundation, foundation.config)
-finetuner.load("checkpoints/reg-mse-pixel-lpips_005000", lora_rank=32)
+# foundation = QwenImageFoundation(QwenConfig(
+#     vae_image_size=1024 * 1024,
+#     regression_base_pipe_steps=4,
+# ))
+# finetuner = QwenLoraFinetuner(foundation, foundation.config)
+# finetuner.load("checkpoints/reg-mse-pixel-lpips_005000", lora_rank=32)
 
 
+dtype = torch.bfloat16
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+pipe = QwenImageEditPlusPipeline.from_pretrained(
+    "Qwen/Qwen-Image-Edit-2509", 
+    transformer=QwenImageTransformer2DModel.from_pretrained(
+        "Qwen/Qwen-Image-Edit-2509",
+        subfolder='transformer',
+        torch_dtype=dtype,
+        device_map=device
+    ),
+    torch_dtype=dtype,
+)
+pipe = pipe.to(device=device, dtype=dtype)
+pipe.load_lora_weights(
+    "checkpoints/distill_5k_lora.safetensors",
+    adapter_name="fast_5k",
+)
+# pipe.unload_lora_weights()
 
 MAX_SEED = np.iinfo(np.int32).max
 
@@ -70,16 +109,16 @@ def run_pipe(
         
         print(f"{len(pil_images)=}")
 
-    finetuner.enable()
-    foundation.scheduler.config["base_shift"] = shift
-    foundation.scheduler.config["max_shift"] = shift
+    # finetuner.enable()
+    pipe.scheduler.config["base_shift"] = shift
+    pipe.scheduler.config["max_shift"] = shift
 
-    result = foundation.base_pipe(foundation.INPUT_MODEL(
+    result = pipe(
         image=pil_images,
         prompt=prompt,
         num_inference_steps=num_inference_steps,
         generator=generator,
-    ))[0]
+    ).images[0]
 
     return result, seed
 
