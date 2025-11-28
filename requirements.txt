@@ -15,7 +15,7 @@ pydantic
 pandas
 modal
 datasets
-
+einops
 para-attn
 lpips
 # https://huggingface.co/spaces/eleazhong/Qwen-Image-Edit-Angles/resolve/main/bin/sageattention-2.2.0-cp310-cp310-linux_x86_64.whl
