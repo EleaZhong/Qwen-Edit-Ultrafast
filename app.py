@@ -72,22 +72,26 @@ pipe.set_adapters(["fast_5k"], adapter_weights=[1.0])
 pipe.fuse_lora(adapter_names=["fast_5k"], lora_scale=1.0)
 pipe.unload_lora_weights()
 
-pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
-pipe.transformer.fuse_qkv_projections()
-pipe.transformer.check_fused_qkv()
+@spaces.GPU(duration=1500)
+def optim_pipe():
+    print(f"func cuda: {torch.cuda.is_available()=}")
 
-optimize_pipeline_(
-    pipe,
-    cache_compiled=True,
-    quantize=True,
-    suffix="_fp8darow_nolast_fa3_fast5k",
-    quantize_config=conf_fp8darow_nolast(),
-    pipe_kwargs={
-        "image": [Image.new("RGB", (1024, 1024))],
-        "prompt":"prompt",
-        "num_inference_steps":2,
-    }
-)
+    pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+    pipe.transformer.fuse_qkv_projections()
+    pipe.transformer.check_fused_qkv()
+
+    optimize_pipeline_(
+        pipe,
+        cache_compiled=True,
+        quantize=True,
+        suffix="_fp8darow_nolast_fa3_fast5k",
+        quantize_config=conf_fp8darow_nolast(),
+        pipe_kwargs={
+            "image": [Image.new("RGB", (1024, 1024))],
+            "prompt":"prompt",
+            "num_inference_steps":2,
+        }
+    )
 
 MAX_SEED = np.iinfo(np.int32).max
 
