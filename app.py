@@ -11,6 +11,10 @@ from PIL import Image
 import gradio as gr
 import spaces
 
+import subprocess
+GIT_TOKEN = os.environ.get("GIT_TOKEN")
+subprocess.run(f"pip install git+https://eleazhong:{GIT_TOKEN}@github.com/wand-ai/wand-ml", shell=True)
+
 from qwenimage.datamodels import QwenConfig
 from qwenimage.debug import ctimed, ftimed
 from qwenimage.experiments.experiments_qwen import ExperimentRegistry
