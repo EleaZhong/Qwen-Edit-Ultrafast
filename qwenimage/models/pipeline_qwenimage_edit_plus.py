@@ -15,6 +15,7 @@
 import inspect
 import math
 from typing import Any, Callable, Dict, List, Optional, Union
+import uuid
 import warnings
 
 from PIL import Image
@@ -24,6 +25,7 @@ import torch
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
 from transformers.models.qwen2 import Qwen2Tokenizer
 from transformers.models.qwen2_vl import Qwen2VLProcessor
+from torchvision.io import encode_jpeg, write_file, write_jpeg
 
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.loaders import QwenImageLoraLoaderMixin
@@ -225,6 +227,10 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         self.prompt_template_encode = "<|im_start|>system\nDescribe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
         self.prompt_template_encode_start_idx = 64
         self.default_sample_size = 128
+
+        self.prompt_embeds, self.prompt_embeds_mask = None, None
+        self.image_latents = None
+        self.latents_mean, self.latents_std = None, None
 
     # Copied from diffusers.pipelines.qwenimage.pipeline_qwenimage.QwenImagePipeline._extract_masked_hidden
     def _extract_masked_hidden(self, hidden_states: torch.Tensor, mask: torch.Tensor):
@@ -571,6 +577,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         channels_last_format: bool = False,
         vae_image_override: int | None = None,
         latent_size_override: int | None = None,
+        prompt_cached: bool = False,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -708,23 +715,24 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
 
             device = self._execution_device
             # 3. Preprocess image
-            if image is not None and not (isinstance(image, torch.Tensor) and image.size(1) == self.latent_channels):
-                if not isinstance(image, list):
-                    image = [image]
-                condition_image_sizes = []
-                condition_images = []
-                vae_image_sizes = []
-                vae_images = []
-                for img in image:
-                    image_width, image_height = img.size
-                    condition_width, condition_height = calculate_dimensions(
-                        CONDITION_IMAGE_SIZE, image_width / image_height
-                    )
-                    vae_width, vae_height = calculate_dimensions(vae_image_size, image_width / image_height)
-                    condition_image_sizes.append((condition_width, condition_height))
-                    vae_image_sizes.append((vae_width, vae_height))
-                    condition_images.append(self.image_processor.resize(img, condition_height, condition_width))
-                    vae_images.append(self.image_processor.preprocess(img, vae_height, vae_width).unsqueeze(2))
+            if not prompt_cached:
+                if image is not None and not (isinstance(image, torch.Tensor) and image.size(1) == self.latent_channels):
+                    if not isinstance(image, list):
+                        image = [image]
+                    condition_image_sizes = []
+                    condition_images = []
+                    vae_image_sizes = []
+                    vae_images = []
+                    for img in image:
+                        image_width, image_height = img.size
+                        condition_width, condition_height = calculate_dimensions(
+                            CONDITION_IMAGE_SIZE, image_width / image_height
+                        )
+                        vae_width, vae_height = calculate_dimensions(vae_image_size, image_width / image_height)
+                        condition_image_sizes.append((condition_width, condition_height))
+                        vae_image_sizes.append((vae_width, vae_height))
+                        condition_images.append(self.image_processor.resize(img, condition_height, condition_width))
+                        vae_images.append(self.image_processor.preprocess(img, vae_height, vae_width).unsqueeze(2))
 
             has_neg_prompt = negative_prompt is not None or (
                 negative_prompt_embeds is not None and negative_prompt_embeds_mask is not None
@@ -741,15 +749,19 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
 
         with ctimed("Encode Prompt"):
             do_true_cfg = true_cfg_scale > 1 and has_neg_prompt
-            prompt_embeds, prompt_embeds_mask = self.encode_prompt(
-                image=condition_images,
-                prompt=prompt,
-                prompt_embeds=prompt_embeds,
-                prompt_embeds_mask=prompt_embeds_mask,
-                device=device,
-                num_images_per_prompt=num_images_per_prompt,
-                max_sequence_length=max_sequence_length,
-            )
+            if prompt_cached:
+                prompt_embeds, prompt_embeds_mask = self.prompt_embeds, self.prompt_embeds_mask
+            else:
+                prompt_embeds, prompt_embeds_mask = self.encode_prompt(
+                    image=condition_images,
+                    prompt=prompt,
+                    prompt_embeds=prompt_embeds,
+                    prompt_embeds_mask=prompt_embeds_mask,
+                    device=device,
+                    num_images_per_prompt=num_images_per_prompt,
+                    max_sequence_length=max_sequence_length,
+                )
+                self.prompt_embeds, self.prompt_embeds_mask = prompt_embeds, prompt_embeds_mask
             if do_true_cfg:
                 negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt(
                     image=condition_images,
@@ -764,26 +776,37 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         with ctimed("Prep gen"):
             # 4. Prepare latent variables
             num_channels_latents = self.transformer.config.in_channels // 4
-            latents, image_latents = self.prepare_latents(
-                vae_images,
-                batch_size * num_images_per_prompt,
-                num_channels_latents,
-                height,
-                width,
-                prompt_embeds.dtype,
-                device,
-                generator,
-                latents,
-            )
-            img_shapes = [
-                [
-                    (1, height // self.vae_scale_factor // 2, width // self.vae_scale_factor // 2),
-                    *[
-                        (1, vae_height // self.vae_scale_factor // 2, vae_width // self.vae_scale_factor // 2)
-                        for vae_width, vae_height in vae_image_sizes
-                    ],
-                ]
-            ] * batch_size
+            if prompt_cached:
+                image_latents = self.image_latents
+                _height = 2 * (int(height) // (self.vae_scale_factor * 2))
+                _width = 2 * (int(width) // (self.vae_scale_factor * 2))
+                shape = (batch_size * num_images_per_prompt, 1, num_channels_latents, _height, _width)
+                latents = randn_tensor(shape, generator=generator, device=device, dtype=image_latents.dtype)
+                latents = self._pack_latents(latents, batch_size * num_images_per_prompt, num_channels_latents, _height, _width)
+                img_shapes = self.img_shapes
+            else:
+                latents, image_latents = self.prepare_latents(
+                    vae_images,
+                    batch_size * num_images_per_prompt,
+                    num_channels_latents,
+                    height,
+                    width,
+                    prompt_embeds.dtype,
+                    device,
+                    generator,
+                    latents,
+                )
+                self.image_latents = image_latents
+                img_shapes = [
+                    [
+                        (1, height // self.vae_scale_factor // 2, width // self.vae_scale_factor // 2),
+                        *[
+                            (1, vae_height // self.vae_scale_factor // 2, vae_width // self.vae_scale_factor // 2)
+                            for vae_width, vae_height in vae_image_sizes
+                        ],
+                    ]
+                ] * batch_size
+                self.img_shapes = img_shapes
 
             # 5. Prepare timesteps
             # print(f"{num_inference_steps=}")
@@ -857,18 +880,23 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                 for i in range(len(ts)-1):
                     t = ts[i]
                     with ctimed(f"loop {i}"):
-                        if self.interrupt:
-                            continue
+                        
+                        with ctimed("pre trans"):
+                            if self.interrupt:
+                                continue
 
-                        # self._current_timestep = t
+                            # self._current_timestep = t
 
-                        latent_model_input = latents
-                        if image_latents is not None:
-                            latent_model_input = torch.cat([latents, image_latents], dim=1)
+                            with ctimed("cat lats"):
+                                latent_model_input = latents
+                                if image_latents is not None:
+                                    latent_model_input = torch.cat([latents, image_latents], dim=1)
 
-                        # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                        in_t = t.expand(latents.shape[0]).to(latents.dtype)
-                        with self.transformer.cache_context("cond"):
+                            # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
+                            with ctimed("broadcast lats"):
+                                in_t = t.expand(latents.shape[0]).to(latents.dtype)
+
+                        with ctimed("transformer proper"):
                             noise_pred = self.transformer(
                                 hidden_states=latent_model_input,
                                 timestep=in_t,
@@ -882,7 +910,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                             noise_pred = noise_pred[:, : latents.size(1)]
 
                         if do_true_cfg:
-                            warnings.warn("doing true CFG")
+                            raise NotImplementedError()
                             with self.transformer.cache_context("uncond"):
                                 neg_noise_pred = self.transformer(
                                     hidden_states=latent_model_input,
@@ -907,29 +935,29 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
 
                         latents = t_utils.inference_ode_step(noise_pred, latents, i, ts)
                         
+                        with ctimed("dtype stuff"):
+                            if latents.dtype != latents_dtype:
+                                if torch.backends.mps.is_available():
+                                    # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
+                                    latents = latents.to(latents_dtype)
 
-                        if latents.dtype != latents_dtype:
-                            if torch.backends.mps.is_available():
-                                # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
-                                latents = latents.to(latents_dtype)
+                        with ctimed("callback and shenanagans"):
+                            if callback_on_step_end is not None:
+                                callback_kwargs = {}
+                                for k in callback_on_step_end_tensor_inputs:
+                                    callback_kwargs[k] = locals()[k]
+                                callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
 
-                        if callback_on_step_end is not None:
-                            callback_kwargs = {}
-                            for k in callback_on_step_end_tensor_inputs:
-                                callback_kwargs[k] = locals()[k]
-                            callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+                                latents = callback_outputs.pop("latents", latents)
+                                prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
 
-                            latents = callback_outputs.pop("latents", latents)
-                            prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                            # call the callback, if provided
+                            # if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                            progress_bar.update()
 
-                        # call the callback, if provided
-                        # if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
-                        progress_bar.update()
+                            if XLA_AVAILABLE:
+                                xm.mark_step()
 
-                        if XLA_AVAILABLE:
-                            xm.mark_step()
-
-        # with ctimed("Post (vae)"):
         self._current_timestep = None
         if output_type == "latent":
             image = latents
@@ -940,16 +968,51 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                 latents_mean = (
                     torch.tensor(self.vae.config.latents_mean)
                     .view(1, self.vae.config.z_dim, 1, 1, 1)
-                    .to(latents.device, latents.dtype)
+                    .to(device, self.vae.dtype)
                 )
                 latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(1, self.vae.config.z_dim, 1, 1, 1).to(
-                    latents.device, latents.dtype
+                    device, self.vae.dtype
                 )
                 latents = latents / latents_std + latents_mean
-            with ctimed("vae.decode"):
                 image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
-            with ctimed("post process"):
-                image = self.image_processor.postprocess(image, output_type=output_type)
+
+                image = image.squeeze(0).add(1).mul(127.5).to(torch.uint8).cpu()
+
+                image_path = f"/tmp/{str(uuid.uuid4())[:8]}.jpg"
+                write_jpeg(image, image_path)
+                image = (image_path,)
+
+
+        # with ctimed("Post (vae)"):
+        # self._current_timestep = None
+        # if output_type == "latent":
+        #     image = latents
+        # else:
+        #     with ctimed("pre decode"):
+        #         latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+
+        #         if prompt_cached:
+        #             latents_mean, latents_std = self.latents_mean, self.latents_std
+        #         else:
+        #             latents_mean = torch.tensor(self.vae.config.latents_mean, device=device, dtype=latents.dtype).view(1, self.vae.config.z_dim, 1, 1, 1)
+        #             latents_std = 1.0 / torch.tensor(self.vae.config.latents_std, device=device, dtype=latents.dtype).view(1, self.vae.config.z_dim, 1, 1, 1)
+                    
+        #             self.latents_mean, self.latents_std = latents_mean, latents_std
+
+        #         latents = latents / latents_std + latents_mean
+        #     with ctimed("todtype"):
+        #         latents = latents.to(self.vae.dtype)
+        #     with ctimed("vae.decode"):
+        #         image = self.vae.decode(latents, return_dict=False)[0][:, :, 0] # [B,C,H,W]
+            
+        #     with ctimed("post process"):
+        #         with ctimed("convert"):
+        #             image = image.squeeze(0).add(1).mul(127.5).to(torch.uint8).cpu()
+        #         with ctimed("write"):
+        #             image_path = f"/tmp/{str(uuid.uuid4())[:8]}.jpg"
+        #             write_jpeg(image, image_path)
+        #         image = (image_path,)
+            
 
 
         # Offload all models

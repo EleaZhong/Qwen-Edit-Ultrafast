@@ -15,7 +15,7 @@ from einops import rearrange
 from qwenimage.datamodels import QwenConfig, QwenInputs
 from qwenimage.debug import clear_cuda_memory, ctimed, ftimed, print_gpu_memory, texam
 from qwenimage.experiments.quantize_text_encoder_experiments import quantize_text_encoder_int4wo_linear
-from qwenimage.experiments.quantize_experiments import quantize_transformer_fp8darow_nolast
+from qwenimage.experiments.quantize_experiments import quantize_transformer_fp8da_nolast
 from qwenimage.loss import LossAccumulator
 from qwenimage.models.pipeline_qwenimage_edit_plus import CONDITION_IMAGE_SIZE, QwenImageEditPlusPipeline, calculate_dimensions
 from qwenimage.models.pipeline_qwenimage_edit_save_interm import QwenImageEditSaveIntermPipeline
@@ -110,7 +110,7 @@ class QwenImageFoundation(WandModel):
             quantize_text_encoder_int4wo_linear(self.text_encoder)
         
         if self.config.quantize_transformer:
-            quantize_transformer_fp8darow_nolast(self.transformer)
+            quantize_transformer_fp8da_nolast(self.transformer)
 
 
     def load(self, load_path):

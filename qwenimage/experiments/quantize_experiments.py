@@ -224,11 +224,11 @@ class Qwen_FA3_AoT_fp8darow_nolast(QwenBaseExperiment):
             }
         )
 
-def quantize_transformer_fp8darow_nolast(model):
+
+def quantize_transformer_fp8da_nolast(model):
     module_fqn_to_config = ModuleFqnToConfig(
         OrderedDict([
             (ATTN_LAST_LAYER, None),
-            # ("_default",Float8DynamicActivationFloat8WeightConfig(granularity=PerRow()),),
             ("_default",Float8DynamicActivationFloat8WeightConfig(),),
         ])
     )
@@ -237,6 +237,26 @@ def quantize_transformer_fp8darow_nolast(model):
     print_first_param(model)
     print(f"quantized model size: {get_model_size_in_bytes(model) / 1024 / 1024} MB")
 
+def quantize_transformer_fp8darow_nolast(model):
+    module_fqn_to_config = ModuleFqnToConfig(
+        OrderedDict([
+            (ATTN_LAST_LAYER, None),
+            ("_default",Float8DynamicActivationFloat8WeightConfig(granularity=PerRow()),),
+        ])
+    )
+    print(f"original model size: {get_model_size_in_bytes(model) / 1024 / 1024} MB")
+    quantize_(model, module_fqn_to_config)
+    print_first_param(model)
+    print(f"quantized model size: {get_model_size_in_bytes(model) / 1024 / 1024} MB")
+
+def conf_fp8darow_nolast():
+    module_fqn_to_config = ModuleFqnToConfig(
+        OrderedDict([
+            (ATTN_LAST_LAYER, None),
+            ("_default",Float8DynamicActivationFloat8WeightConfig(granularity=PerRow()),),
+        ])
+    )
+    return module_fqn_to_config
 
 @ExperimentRegistry.register(name="qwen_fa3_aot_fp8darow_nofirstlast")
 class Qwen_FA3_AoT_fp8darow_nofirstlast(QwenBaseExperiment):
