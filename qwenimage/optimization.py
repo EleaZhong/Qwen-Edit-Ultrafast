@@ -20,7 +20,7 @@ import torch
 from torch.utils._pytree import tree_map
 from torchao.utils import get_model_size_in_bytes
 
-from qwenimage.datamodels import QuantOptions
+# from qwenimage.datamodels import QuantOptions
 from qwenimage.debug import ftimed, print_first_param
 
 
@@ -135,7 +135,7 @@ def optimize_pipeline_(
     aoti_apply(compiled_transformer, pipeline.transformer)
 
 
-def simple_quantize_model(model, quant_option: QuantOptions):
+def simple_quantize_model(model, quant_option: 'QuantOptions'):
     if quant_option == QuantOptions.INT8WO:
         aoconfig = Int8WeightOnlyConfig()
     elif quant_option == QuantOptions.INT4WO:
