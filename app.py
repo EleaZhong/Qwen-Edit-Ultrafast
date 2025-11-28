@@ -176,8 +176,7 @@ with gr.Blocks(theme=gr.themes.Citrus()) as demo:
             result = gr.Gallery(
                 label="Output Image",
                 interactive=False,
-                # type="filepath",
-                columns=4,
+                columns=2,
                 height=800,
                 object_fit="scale-down",
             )
