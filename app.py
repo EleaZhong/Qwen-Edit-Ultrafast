@@ -15,21 +15,21 @@ import subprocess
 GIT_TOKEN = os.environ.get("GIT_TOKEN")
 import subprocess
 
-cmd = f"pip install git+https://eleazhong:{GIT_TOKEN}@github.com/wand-ai/wand-ml"
+# cmd = f"pip install git+https://eleazhong:{GIT_TOKEN}@github.com/wand-ai/wand-ml"
 
-proc = subprocess.Popen(
-    cmd,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    text=True,       # or encoding="utf-8" on older Python
-    bufsize=1,
-)
+# proc = subprocess.Popen(
+#     cmd,
+#     stdout=subprocess.PIPE,
+#     stderr=subprocess.STDOUT,
+#     text=True,       # or encoding="utf-8" on older Python
+#     bufsize=1,
+# )
 
-for line in proc.stdout:
-    print(line, end="")   # already has newline
+# for line in proc.stdout:
+#     print(line, end="")   # already has newline
 
-proc.wait()
-print("Exit code:", proc.returncode)
+# proc.wait()
+# print("Exit code:", proc.returncode)
 
 from qwenimage.debug import ctimed
 from qwenimage.models.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
