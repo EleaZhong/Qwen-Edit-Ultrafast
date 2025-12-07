@@ -35,6 +35,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
 
 from qwenimage.activation_record import ActivationReport
+from qwenimage.debug import ctimed
 from qwenimage.models.attention_processors import QwenDoubleStreamAttnProcessor2_0
 
 
@@ -511,61 +512,66 @@ class QwenImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         else:
             lora_scale = 1.0
 
-        if USE_PEFT_BACKEND:
-            # weight the lora layers by setting `lora_scale` for each PEFT layer
-            scale_lora_layers(self, lora_scale)
-        else:
-            if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
-                logger.warning(
-                    "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
-                )
-
-        hidden_states = self.img_in(hidden_states)
-
-        timestep = timestep.to(hidden_states.dtype)
-        encoder_hidden_states = self.txt_norm(encoder_hidden_states)
-        encoder_hidden_states = self.txt_in(encoder_hidden_states)
-
-        if guidance is not None:
-            guidance = guidance.to(hidden_states.dtype) * 1000
-
-        temb = (
-            self.time_text_embed(timestep, hidden_states)
-            if guidance is None
-            else self.time_text_embed(timestep, guidance, hidden_states)
-        )
-
-        for index_block, block in enumerate(self.transformer_blocks):
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                warnings.warn("Gradient ckpt?")
-                encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
-                    block,
-                    hidden_states,
-                    encoder_hidden_states,
-                    encoder_hidden_states_mask,
-                    temb,
-                    image_rotary_emb,
-                )
-
+        with ctimed("scale lora"):
+            if USE_PEFT_BACKEND:
+                # weight the lora layers by setting `lora_scale` for each PEFT layer
+                scale_lora_layers(self, lora_scale)
             else:
-                encoder_hidden_states, hidden_states = block(
-                    hidden_states=hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_hidden_states_mask=encoder_hidden_states_mask,
-                    temb=temb,
-                    image_rotary_emb=image_rotary_emb,
-                    joint_attention_kwargs=attention_kwargs,
-                )
-                self.arec(f"encoder_hidden_states.{index_block}", encoder_hidden_states)
-                self.arec(f"hidden_states.{index_block}", hidden_states)
+                if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
+                    logger.warning(
+                        "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
+                    )
 
-        # Use only the image part (hidden_states) from the dual-stream blocks
-        hidden_states = self.norm_out(hidden_states, temb)
-        output = self.proj_out(hidden_states)
+        with ctimed("pre blocks"):
+            hidden_states = self.img_in(hidden_states)
 
-        if USE_PEFT_BACKEND:
-            # remove `lora_scale` from each PEFT layer
-            unscale_lora_layers(self, lora_scale)
+            timestep = timestep.to(hidden_states.dtype)
+            encoder_hidden_states = self.txt_norm(encoder_hidden_states)
+            encoder_hidden_states = self.txt_in(encoder_hidden_states)
+
+            if guidance is not None:
+                guidance = guidance.to(hidden_states.dtype) * 1000
+
+            temb = (
+                self.time_text_embed(timestep, hidden_states)
+                if guidance is None
+                else self.time_text_embed(timestep, guidance, hidden_states)
+            )
+
+        with ctimed("blocks"):
+            for index_block, block in enumerate(self.transformer_blocks):
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    warnings.warn("Gradient ckpt?")
+                    encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
+                        block,
+                        hidden_states,
+                        encoder_hidden_states,
+                        encoder_hidden_states_mask,
+                        temb,
+                        image_rotary_emb,
+                    )
+
+                else:
+                    encoder_hidden_states, hidden_states = block(
+                        hidden_states=hidden_states,
+                        encoder_hidden_states=encoder_hidden_states,
+                        encoder_hidden_states_mask=encoder_hidden_states_mask,
+                        temb=temb,
+                        image_rotary_emb=image_rotary_emb,
+                        joint_attention_kwargs=attention_kwargs,
+                    )
+                    self.arec(f"encoder_hidden_states.{index_block}", encoder_hidden_states)
+                    self.arec(f"hidden_states.{index_block}", hidden_states)
+
+        with ctimed("post blocks"):
+            # Use only the image part (hidden_states) from the dual-stream blocks
+            hidden_states = self.norm_out(hidden_states, temb)
+            output = self.proj_out(hidden_states)
+
+        with ctimed("lora"):
+            if USE_PEFT_BACKEND:
+                # remove `lora_scale` from each PEFT layer
+                unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
             return (output,)
